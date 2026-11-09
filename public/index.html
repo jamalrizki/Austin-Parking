@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Austin Free Parking</title>
+  <meta name="description" content="Where can I park on the street for free in Austin, right now or at a time I pick?">
+  <meta name="theme-color" content="#0f1115">
+  <link rel="preconnect" href="https://basemaps.cartocdn.com">
+  <link rel="preload" href="data/segments.geojson" as="fetch" crossorigin>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="map" aria-label="Map of street parking"></div>
+
+  <header class="top">
+    <form id="search" class="search" autocomplete="off" role="search">
+      <input id="q" type="search" placeholder="Search street or address" aria-label="Search street or address">
+      <ul id="results" class="results" hidden></ul>
+    </form>
+    <div class="controls">
+      <div class="when">
+        <select id="day" aria-label="Day"></select>
+        <input id="time" type="time" step="900" aria-label="Time">
+        <button id="now" type="button" class="chip" title="Reset to now">Now</button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Minimum free window">
+        <button type="button" data-w="any" class="on" role="radio" aria-checked="true">Any</button>
+        <button type="button" data-w="120" role="radio" aria-checked="false">2h+</button>
+        <button type="button" data-w="240" role="radio" aria-checked="false">4h+</button>
+        <button type="button" data-w="overnight" role="radio" aria-checked="false">Overnight</button>
+      </div>
+    </div>
+  </header>
+
+  <button id="locate" class="fab" type="button" aria-label="Near me" title="Near me">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+  </button>
+
+  <div class="legend" aria-label="Legend">
+    <span><i class="sw green"></i>Free</span>
+    <span><i class="sw amber"></i>Free &lt;2h</span>
+    <span><i class="sw red"></i>Restricted</span>
+    <span><i class="sw grey"></i>Unknown</span>
+  </div>
+
+  <section id="card" class="card" hidden aria-live="polite">
+    <button id="close" class="close" type="button" aria-label="Close">×</button>
+    <div id="cardBody"></div>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <footer class="foot">Always check posted signs. <span id="asof"></span></footer>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

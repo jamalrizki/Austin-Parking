@@ -1,0 +1,10 @@
+{
+  "name": "austin-free-parking",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/engine.test.mjs",
+    "build-data": "python3 pipeline/fetch_layers.py && python3 pipeline/build_segments.py && python3 pipeline/validate.py",
+    "serve": "python3 -m http.server -d public 8080"
+  }
+}

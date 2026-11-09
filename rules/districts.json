@@ -1,0 +1,28 @@
+{
+  "_doc": "Hand-maintained rules. Per-zone hours come from city data; this file holds what the data does not: meter holidays, rates, and district hours used as a cross-check. Update last_checked when you re-verify against source_url.",
+  "holidays_not_enforced": {
+    "applies_to": ["paid"],
+    "days": ["new_years_day", "independence_day", "labor_day", "thanksgiving_day", "christmas_day"],
+    "note": "City lists the holiday itself; it does not say whether observed weekday shifts apply, so none are applied.",
+    "source_url": "https://www.austintexas.gov/transportation-public-works/paid-parking",
+    "last_checked": "2026-11-08"
+  },
+  "rates": {
+    "on_street": "$2/hr for hours 1-2, $3 hr 3, $3.50 hr 4, $4 hr 5, $4.50 hr 6, $5/hr hours 7-10; 10-hour max session ($39)",
+    "source_url": "https://www.austintexas.gov/transportation-public-works/paid-parking",
+    "last_checked": "2026-11-08"
+  },
+  "pay_app": {"name": "Park ATX", "url": "https://parkatx.com"},
+  "districts": [
+    {
+      "name": "East Austin",
+      "pay_area_name": "East Austin",
+      "days": ["mon", "tue", "wed", "thu", "fri", "sat"],
+      "start": "08:00",
+      "end": "00:00",
+      "description": "Several streets between I-35 and Chicon Street",
+      "source_url": "https://www.austintexas.gov/transportation-public-works/paid-parking",
+      "last_checked": "2026-11-08"
+    }
+  ]
+}

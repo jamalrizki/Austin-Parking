@@ -1,0 +1,23 @@
+{
+  "_doc": "Maps city PARKING_TYPE / ALL_RESTRICTION_TYPES values to app categories. Categories: paid, permit, free, timed, noparking, loading, ada, other. 'other' renders grey. Unknown values not listed here also render grey and are reported by validate.py.",
+  "Paystation Zone":             {"cat": "paid",      "label": "Paid parking (pay station / Park ATX)"},
+  "Mobile Pay":                  {"cat": "paid",      "label": "Paid parking (Park ATX app)"},
+  "Parking Meter Zone":          {"cat": "paid",      "label": "Paid parking (meter)"},
+  "Residential Parking Permit":  {"cat": "permit",    "label": "Residential permit only"},
+  "Unrestricted Parking":        {"cat": "free",      "label": "Unrestricted parking"},
+  "Time Limited Parking":        {"cat": "timed",     "label": "Free, time-limited"},
+  "No Parking":                  {"cat": "noparking", "label": "No parking"},
+  "Bus Stop":                    {"cat": "noparking", "label": "Bus stop - no parking"},
+  "Police Only":                 {"cat": "noparking", "label": "Police only"},
+  "Special Reserved":            {"cat": "noparking", "label": "Reserved"},
+  "Reserved":                    {"cat": "noparking", "label": "Reserved"},
+  "Bicycle Parking Zone":        {"cat": "noparking", "label": "Bicycle parking"},
+  "Pedicab Zone":                {"cat": "noparking", "label": "Pedicab zone"},
+  "Car2Go Parking":              {"cat": "noparking", "label": "Car-share only"},
+  "Valet Parking Zone":          {"cat": "loading",   "label": "Valet zone"},
+  "Passenger Loading Zone":      {"cat": "loading",   "label": "Passenger loading"},
+  "Commercial Service Zone":     {"cat": "loading",   "label": "Commercial loading"},
+  "Customer Service Zone":       {"cat": "loading",   "label": "Short-term customer zone"},
+  "Marked ADA Zone":             {"cat": "ada",       "label": "Accessible (ADA placard) only"},
+  "Other":                       {"cat": "other",     "label": "Other restriction"}
+}
