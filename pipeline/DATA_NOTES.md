@@ -238,3 +238,18 @@ Austin publishes no such citywide inventory, so this map combines evidence:
 Next: OSM per-side parking tags as a labelled second source; parked-car detection on public aerial
 imagery (City 2023 15 cm, StratMap 2019 15 cm, StratMap 2020 7.6 cm) as our own presence evidence.
 Austin publishes no geolocated parking-citation data on its open-data portal (checked).
+
+## Parked-car evidence: curb lines and traffic (2026-11-08)
+
+- Street centrelines can sit several metres off the real roadway in the imagery (seen on Bethune
+  Ave area tiles), so curb lines now come from `impervious_cover_2023` "Paved Road" outlines
+  (12,277 polygons, traced from the same imagery). A car's side is the nearer paved edge measured
+  across the road; only the segment's direction is used.
+- Traffic in a curb lane sits near the edge too. Measured distance to the paved edge: parked cars
+  on St. John's residential streets median 1.2 m (77% <= 1.5 m); moving traffic on Camino La Costa,
+  Cameron Rd, La Posada, La Calma, IH-35 frontage median 2.8 m (21% <= 1.5 m). Rule per side and
+  survey: >= 2 cars within 1.6 m of the edge and at least twice as many as cars further out.
+  Evidence needs this in 2+ of the 3 surveys. Test area: 48 sides confirmed, all residential; none
+  of Jamal's no-parking streets.
+- Citywide detection runs locally and resumably (`pipeline/cars/run_city.py`), ~3 tiles/s for the
+  2023 survey with 4 parallel downloads.

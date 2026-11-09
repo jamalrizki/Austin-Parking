@@ -120,6 +120,28 @@ def fetch_curb_cuts(path):
     return n
 
 
+def fetch_roads(path):
+    """Paved-road outlines (impervious_cover_2023) used as curb lines for parked-car evidence."""
+    offset, n = 0, 0
+    with open(path, "w") as out:
+        while True:
+            q = urllib.parse.urlencode({
+                "where": "FEATURE='Paved Road'", "outFields": "FEATURE", "outSR": 4326, "f": "json", "geometryPrecision": 6,
+                "maxAllowableOffset": 0.000004, "orderByFields": "OBJECTID", "resultOffset": offset, "resultRecordCount": 500,
+            })
+            got = get(f"{CURB_CUTS}/query?{q}").get("features", [])
+            for f in got:
+                rings = (f.get("geometry") or {}).get("rings")
+                if rings:
+                    out.write(json.dumps(rings, separators=(",", ":")) + "\n")
+                    n += 1
+            offset += len(got)
+            if len(got) < 500:
+                break
+    print(f"  roads: {n} outlines")
+    return n
+
+
 def fetch_centerline(poly):
     wkt = "MULTIPOLYGON(((" + ",".join(f"{x} {y}" for x, y in poly) + ")))"
     feats, offset, page = [], 0, 5000
@@ -175,6 +197,8 @@ def main():
     (RAW / "ctn.json").write_text(json.dumps([f["properties"] for f in ctn["features"]]))
     if fetch_curb_cuts(RAW / "curb_cuts.jsonl") < 400000:
         sys.exit("ERROR: curb-cut fetch looks incomplete")
+    if fetch_roads(RAW / "roads.jsonl") < 10000:
+        sys.exit("ERROR: road-outline fetch looks incomplete")
     out["centerline"] = fetch_centerline(poly)
     out["osm"] = fetch_osm(poly)
     for name, fc in out.items():
