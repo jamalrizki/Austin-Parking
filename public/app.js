@@ -257,26 +257,91 @@ function markFilter() {
 // Keep "now" fresh.
 setInterval(() => { if (state.live) { render(); syncControls(); } }, 60000);
 
-// ---------- near me ----------
-let meMarker = null;
+// ---------- near me: live blue dot ----------
+// The dot keeps following you once location is allowed, but the map only re-centres when you
+// tap the button. If permission was granted on a previous visit, the dot starts on load (no prompt).
+const me = { marker: null, watch: null, last: null, centreNext: false };
+
+function meDot() {
+  const el = document.createElement("div");
+  el.className = "me-dot";
+  return new maplibregl.Marker({ element: el });
+}
+
+function setAccuracy(ll, metres) {
+  if (!map.getSource("me-acc")) {
+    if (!map.isStyleLoaded()) return;
+    map.addSource("me-acc", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({ id: "me-acc", type: "circle", source: "me-acc",
+      paint: { "circle-color": "#60a5fa", "circle-opacity": 0.12, "circle-stroke-color": "#60a5fa",
+               "circle-stroke-opacity": 0.35, "circle-stroke-width": 1, "circle-radius": 0 } });
+  }
+  map.getSource("me-acc").setData({ type: "Feature", geometry: { type: "Point", coordinates: ll }, properties: {} });
+  // metres -> pixels at zoom z: m / (156543.03 * cos(lat) / 2^z); exponential base 2 between z0 and z22.
+  const mpp0 = 156543.03 * Math.cos((ll[1] * Math.PI) / 180);
+  map.setPaintProperty("me-acc", "circle-radius",
+    ["interpolate", ["exponential", 2], ["zoom"], 0, metres / mpp0, 22, (metres / mpp0) * 2 ** 22]);
+}
+
+function onPosition(pos) {
+  $("locate").classList.remove("busy");
+  $("locate").classList.add("on");
+  const ll = [pos.coords.longitude, pos.coords.latitude];
+  me.last = ll;
+  (me.marker ||= meDot()).setLngLat(ll).addTo(map);
+  setAccuracy(ll, Math.min(pos.coords.accuracy || 0, 500));
+  if (me.centreNext) {
+    me.centreNext = false;
+    map.flyTo({ center: ll, zoom: Math.max(map.getZoom(), 16.5) });
+  }
+}
+
+function onPositionError(err) {
+  $("locate").classList.remove("busy");
+  if (err.code === 1) {
+    stopWatching();
+    $("locate").classList.remove("on");
+    if (me.centreNext) toast("Location permission denied — search or pan the map instead.");
+  } else if (me.centreNext) {
+    toast("Couldn't get your location.");
+  }
+  me.centreNext = false;
+}
+
+function startWatching() {
+  if (me.watch != null || !("geolocation" in navigator)) return;
+  me.watch = navigator.geolocation.watchPosition(onPosition, onPositionError,
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
+}
+
+function stopWatching() {
+  if (me.watch != null) navigator.geolocation.clearWatch(me.watch);
+  me.watch = null;
+}
+
 $("locate").addEventListener("click", () => {
   if (!("geolocation" in navigator)) { toast("Location isn't available in this browser."); return; }
+  if (me.last && me.watch != null) {
+    map.flyTo({ center: me.last, zoom: Math.max(map.getZoom(), 16.5) });
+    return;
+  }
+  me.centreNext = true;
   $("locate").classList.add("busy");
-  navigator.geolocation.getCurrentPosition((pos) => {
-    $("locate").classList.remove("busy");
-    const ll = [pos.coords.longitude, pos.coords.latitude];
-    if (!meMarker) {
-      const el = document.createElement("div");
-      el.style.cssText = "width:16px;height:16px;border-radius:50%;background:#60a5fa;border:3px solid #fff;box-shadow:0 0 0 6px rgba(96,165,250,.25)";
-      meMarker = new maplibregl.Marker({ element: el });
-    }
-    meMarker.setLngLat(ll).addTo(map);
-    map.flyTo({ center: ll, zoom: Math.max(map.getZoom(), 16.5) });
-  }, (err) => {
-    $("locate").classList.remove("busy");
-    toast(err.code === 1 ? "Location permission denied — search or pan the map instead." : "Couldn't get your location.");
-  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+  startWatching();
 });
+
+// Save battery: pause tracking while the page is hidden, resume when it's back.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopWatching();
+  else if (me.marker) startWatching();
+});
+
+// Already allowed on a previous visit? Show the dot straight away, without prompting.
+try {
+  navigator.permissions?.query({ name: "geolocation" }).then((p) => {
+    if (p.state === "granted") map.once("idle", startWatching);
+  }).catch(() => {});
+} catch { /* older browsers: dot starts on first tap */ }
 
 // ---------- search: local streets first, then OpenStreetMap geocoder ----------
 const results = $("results");
