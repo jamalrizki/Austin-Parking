@@ -165,10 +165,15 @@ const NO_ROOM = {
   [-5]: "The city's transportation network shows a travel lane at the curb and no parking lane here, so there's no space to park.",
   [-6]: "The city's transportation network shows a bike lane at the curb here, so there's no space to park.",
   [-7]: "The city's transportation network lists this street as under 24 ft wide: too narrow to park without blocking traffic.",
+  [-10]: "Driveways and parking-lot entrances (city aerial survey) plus the 20 ft corner clearance leave no gap long enough for a car on this side.",
 };
 
 export function evaluateSide(code, tables, types, t, street = {}) {
   const surveyed = tables.surveyYears ? `${tables.surveyYears[0]}–${tables.surveyYears[2]}` : "";
+  if (code === -11) {
+    return { color: "grey", title: "Parking not confirmed", until: null, freeMins: 0, signs: [],
+      reason: "This is a collector or arterial road. No city parking zone, parking sign, or listed parking lane shows that curb parking exists here, so the map won't call it free." };
+  }
   if (code === -8 || code === -9) {
     return { color: "grey", title: "Room to park unconfirmed", until: null, freeMins: 0, signs: [],
       reason: (code === -8
@@ -176,7 +181,7 @@ export function evaluateSide(code, tables, types, t, street = {}) {
         : "No parking signs on record, but the city has no street-width or lane data for this block (common on divided roads), so this map can't confirm there's room to park.") };
   }
   if (NO_ROOM[code]) {
-    return { color: "red", title: "No parking space", until: null, freeMins: 0, signs: [], reason: NO_ROOM[code] + (street.w ? ` (pavement ${street.w} ft)` : "") };
+    return { color: "red", title: "No parking space", until: null, freeMins: 0, signs: [], reason: NO_ROOM[code] + (street.w && code !== -10 ? ` (pavement ${street.w} ft)` : "") };
   }
   const narrow = street.w && street.w < 28 && !street.pk
     ? `Narrow street (pavement ${street.w} ft): parking may only fit on one side, or not at all.` : null;

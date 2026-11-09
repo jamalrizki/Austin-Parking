@@ -222,3 +222,19 @@ Rules (only where no sign rule or curb zone applies):
 
 Jamal's walk (La Calma Dr, La Posada Dr) found green sides with no physical parking. Both are
 divided roads absent from CTN; that is what prompted the >= 28 ft / parking-lane requirement.
+
+## Root cause and evidence model (2026-11-08)
+
+Research (SpotAngels, Coord, Seattle/SF blockface data, Berlin OSM + aerial studies) showed every
+working system first records where parking physically exists per curb side, then applies rules.
+Austin publishes no such citywide inventory, so this map combines evidence:
+- presence: city curb zones; signs that regulate parking (permit / pay / time limit); CTN listed
+  parking lane (-OP, P edge); on local residential streets (class 6/9, <=2 lanes) 28 ft+ pavement
+  with no restriction signs
+- absence: No Parking signs; CTN -N or travel/bike lane at the curb; < 24 ft; no car-length gap
+  between driveways/lots (impervious_cover_2023, 571,638 polygons) after 20 ft corner clearance
+- collectors/arterials/multi-lane with no presence evidence: grey "parking not confirmed" (-11)
+  (Cameron Rd, Norwood Park Blvd reports)
+Next: OSM per-side parking tags as a labelled second source; parked-car detection on public aerial
+imagery (City 2023 15 cm, StratMap 2019 15 cm, StratMap 2020 7.6 cm) as our own presence evidence.
+Austin publishes no geolocated parking-citation data on its open-data portal (checked).

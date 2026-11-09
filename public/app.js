@@ -56,15 +56,15 @@ map.on("load", async () => {
   for (const [S, dir] of [["L", -1], ["R", 1]]) {
     const code = ["get", S];
     map.addLayer({ id: `side-${S}`, type: "line", source: "streets", minzoom: 11,
-      filter: ["any", ["==", code, -2], [">=", code, 0], ["in", code, ["literal", [-5, -6, -7]]]],
+      filter: ["any", ["==", code, -2], [">=", code, 0], ["in", code, ["literal", [-5, -6, -7, -10]]]],
       layout: { "line-cap": "butt" },
-      paint: { "line-color": ["case", ["in", code, ["literal", [-5, -6, -7]]], COLORS.red,
+      paint: { "line-color": ["case", ["in", code, ["literal", [-5, -6, -7, -10]]], COLORS.red,
                  ["match", ["coalesce", ["feature-state", `${S}c`], "green"],
                    "green", COLORS.green, "amber", COLORS.amber, "red", COLORS.red, COLORS.grey]],
                "line-width": width(2.6), "line-offset": sideOffset(dir),
-               "line-opacity": ["case", ["in", code, ["literal", [-5, -6, -7]]], 0.55,
+               "line-opacity": ["case", ["in", code, ["literal", [-5, -6, -7, -10]]], 0.55,
                  ["boolean", ["feature-state", `${S}d`], false], 0.18, 0.9] } });
-    map.addLayer({ id: `side-${S}-none`, type: "line", source: "streets", minzoom: 12, filter: ["in", code, ["literal", [-3, -8, -9]]],
+    map.addLayer({ id: `side-${S}-none`, type: "line", source: "streets", minzoom: 12, filter: ["in", code, ["literal", [-3, -8, -9, -11]]],
       layout: { "line-cap": "butt" },
       paint: { "line-color": "#a3abb8", "line-width": 1.6, "line-offset": sideOffset(dir), "line-opacity": 0.7, "line-dasharray": [1.5, 1.5] } });
   }
@@ -172,6 +172,8 @@ function openCard(src, id, side) {
   if (src === "streets") {
     if (p.w) rows.push(["Pavement width", `${p.w} ft`]);
     if (p.pk) rows.push(["Parking lane", "Yes, per city street data"]);
+    const sp = side === "L" ? p.spL : p.spR;
+    if (sp > 0 && r.color !== "grey") rows.push(["Curb space", `Room for about ${sp >= 99 ? "99+" : sp} car${sp === 1 ? "" : "s"} between driveways (city aerial survey)`]);
   }
   const sy = state.streets?.tables.surveyYears;
   rows.push(["Source", src === "streets" ? `City of Austin sign inventory${sy ? ` (collected ${sy[0]}–${sy[2]})` : ""}` : srcName]);

@@ -10,7 +10,8 @@ Per side, in priority order:
      listed without on-street parking, has a travel/bike lane at the curb, or is under 24 ft wide.
      Only applied where no sign or curb zone says otherwise. Stored as ("X", reason).
   W  no parking signs, but no evidence of physical room: no CTN record / width (W, "nodata"),
-     or pavement 24-27 ft with no parking lane listed (W, "tight"). Shown grey, never green.
+     or pavement 24-27 ft with no parking lane listed (W, "tight"), or a collector/arterial/multi-lane
+     road with no listed parking lane (W, "busy"). Shown grey, never green.
      Added after Jamal walked La Calma Dr and La Posada Dr (divided, not in CTN, no parking).
   M  median side of a divided road (one-way carriageway, no addresses on that side, the
      opposite carriageway of the same street right beside it) -> not drawn
@@ -270,10 +271,20 @@ def build_side_info(kept, pay_areas, props=None, ctn=None):
         r, reason, has_lane = physical(row)
         room[seg], why[seg] = r, reason
         width = (row or {}).get("PAVEMENT_WIDTH") or 0
-        # Green needs positive evidence of space: a listed parking lane or >= 28 ft of pavement.
-        fits[seg] = has_lane or width >= TIGHT_FT
-        fit_why[seg] = "tight" if width else "nodata"
+        # Green needs positive evidence that curb parking exists:
+        #  - any road: the city lists a parking lane (CTN -OP / P edge / bike lane with parking)
+        #  - local residential streets only (class 6 local, 9 cul-de-sac, <= 2 lanes): >= 28 ft pavement
+        # Collectors and arterials are often wide because of extra travel lanes (Cameron Rd,
+        # Norwood Park Blvd), so width says nothing about parking there.
+        rc = str(((props or {}).get(seg) or {}).get("road_class"))
+        lanes = (row or {}).get("TOTAL_LANE_COUNT") or 0
+        local = rc in ("6", "9") and lanes <= 2
+        fits[seg] = has_lane or (local and width >= TIGHT_FT)
+        fit_why[seg] = "busy" if not local else ("tight" if width else "nodata")
     stats["median_sides"] = len(medians)
+    widths = {seg: ((ctn or {}).get(seg) or {}).get("PAVEMENT_WIDTH") for seg in kept}
+    spaces, n_cuts = curb_spaces(lines, widths, RAW / "curb_cuts.jsonl")
+    stats["curb_cut_polygons"] = n_cuts
     out = {}
     for seg in kept:
         for side in ("L", "R"):
@@ -281,6 +292,8 @@ def build_side_info(kept, pay_areas, props=None, ctn=None):
                 out[(seg, side)] = "M"
             elif (seg, side) in zone_sides:
                 out[(seg, side)] = "Z"
+            elif spaces.get((seg, side)) == 0 and seg in surveyed and room.get(seg) is not False:
+                out[(seg, side)] = ("X", "driveways")
             elif (seg, side) in entries and entries[(seg, side)]["rules"]:
                 out[(seg, side)] = entries[(seg, side)]
             elif room.get(seg) is False:
@@ -296,4 +309,93 @@ def build_side_info(kept, pay_areas, props=None, ctn=None):
                 out[(seg, side)] = "N"
     years = sorted(datetime.datetime.fromtimestamp(t / 1000, datetime.timezone.utc).year for t in survey_dates)
     stats["survey_years"] = [years[0], years[len(years) // 2], years[-1]] if years else None
+    stats["spaces"] = spaces
     return out, stats
+
+
+# ---------- curb space between driveways (city impervious-cover survey) ----------
+CORNER_CLEAR_M = 6.1   # 20 ft: Texas Transp. Code 545.302 - no parking within 20 ft of a crosswalk at an intersection
+CAR_M = 6.4            # ~21 ft per parallel space
+FT = 0.3048
+
+
+def _pieces(lines):
+    """Metric pieces (ax, ay, dx, dy, length, start_offset) along the whole polyline."""
+    out, s0 = [], 0.0
+    for line in lines:
+        for a, b in zip(line, line[1:]):
+            ax, ay = _xy(a)
+            bx, by = _xy(b)
+            dx, dy = bx - ax, by - ay
+            L = math.hypot(dx, dy)
+            if L > 0:
+                out.append((ax, ay, dx, dy, L, s0))
+                s0 += L
+    return out, s0
+
+
+def _project(x, y, pieces):
+    """(along_m, dist_m, side, clamped) of a metric point on the polyline."""
+    best = None
+    for ax, ay, dx, dy, L, s0 in pieces:
+        t = ((x - ax) * dx + (y - ay) * dy) / (L * L)
+        tc = max(0.0, min(1.0, t))
+        d = math.hypot(x - ax - tc * dx, y - ay - tc * dy)
+        if best is None or d < best[1]:
+            side = "L" if dx * (y - ay) - dy * (x - ax) > 0 else "R"
+            best = (s0 + tc * L, d, side, t < 0 or t > 1)
+    return best
+
+
+def curb_spaces(lines, widths, path):
+    """{(seg, side): car spaces} counting curb gaps between driveways/lots, minus corner clearance.
+    Returns ({}, 0) if the curb-cut file is missing."""
+    if not path.exists():
+        return {}, 0
+    geo = {s: _pieces(ls) for s, ls in lines.items()}
+    grid = Grid(cell=60)
+    for s, ls in lines.items():
+        grid.add(s, ls)
+    cuts, n = {}, 0
+    with open(path) as fh:
+        for line in fh:
+            _, ring = json.loads(line)
+            n += 1
+            pts = [_xy(p) for p in ring]
+            cands = set()
+            for p in ring[:: max(1, len(ring) // 4)]:
+                cands |= grid.near(p)
+            for seg in cands:
+                pieces, _ = geo[seg]
+                if not pieces:
+                    continue
+                half = (widths.get(seg) or 30) * FT / 2
+                reach, touch = half + 6.0, half + 3.0
+                by_side = {}
+                for x, y in pts:
+                    s, d, side, clamped = _project(x, y, pieces)
+                    if d <= reach and not clamped:
+                        by_side.setdefault(side, []).append((s, d))
+                for side, v in by_side.items():
+                    if len(v) < 2 or min(d for _, d in v) > touch:
+                        continue
+                    a, b = min(s for s, _ in v), max(s for s, _ in v)
+                    if 1.5 <= b - a <= 150:
+                        cuts.setdefault((seg, side), []).append((a, b))
+    out = {}
+    for seg, (pieces, total) in geo.items():
+        for side in ("L", "R"):
+            lo, hi = CORNER_CLEAR_M, total - CORNER_CLEAR_M
+            spaces, cur = 0, lo
+            for a, b in sorted(cuts.get((seg, side), [])):
+                if b <= cur:
+                    continue
+                if a > cur:
+                    spaces += int((min(a, hi) - cur) // CAR_M) if min(a, hi) > cur else 0
+                cur = max(cur, b)
+                if cur >= hi:
+                    break
+            if cur < hi:
+                spaces += int((hi - cur) // CAR_M)
+            out[(seg, side)] = spaces
+    return out, n

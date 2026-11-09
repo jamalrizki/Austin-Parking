@@ -268,6 +268,7 @@ def build_centerline(excl, covered, pay_areas):
         feats.append({"type": "Feature", "geometry": geom, "properties": props})
     ctn = {str(int(a["SEGMENT_ID"])): a for a in json.loads((RAW / "ctn.json").read_text()) if a.get("SEGMENT_ID")}
     sides, stats = build_side_info(kept, pay_areas, kept_props, ctn)
+    spaces = stats.pop("spaces")
     from sides import physical
     for seg in kept:
         row = ctn.get(seg) or {}
@@ -280,6 +281,8 @@ def build_centerline(excl, covered, pay_areas):
         seg = f["properties"]["seg"]
         f["properties"]["w"] = kept_props[seg]["_w"]
         f["properties"]["pk"] = kept_props[seg]["_pk"]
+        f["properties"]["spL"] = spaces.get((seg, "L"), -1)
+        f["properties"]["spR"] = spaces.get((seg, "R"), -1)
         f["properties"]["L"] = sides[(seg, "L")]
         f["properties"]["R"] = sides[(seg, "R")]
     return feats, dropped, stats
@@ -346,11 +349,14 @@ def pack_streets(feats, survey_years):
     """Compact street format, decoded in public/streets.js.
     {"v":5, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
      "sy":[first, median, last survey year],
-     "f":[[name_i, hundred_block(-1 = none), left, right, pavement_ft(-1 = unknown), parking_lane(0/1), part, part...], ...]}
+     "f":[[name_i, hundred_block(-1 = none), left, right, pavement_ft(-1 = unknown), parking_lane(0/1),
+            spaces_left, spaces_right (car-length curb gaps between driveways, -1 unknown), part...], ...]}
     left/right: -1 curb zones cover this side, -2 surveyed with no parking signs,
                 -3 no city sign records, -4 median side of a divided road,
                 -5/-6/-7 no physical parking space (travel lane / bike lane at curb / under 24 ft wide),
                 -8/-9 no parking signs but room unconfirmed (24-27 ft, no parking lane / no width data),
+                -10 no car-length gap between driveways/lots and corners,
+                -11 collector/arterial/multi-lane road with no sign, zone or listed parking lane showing parking,
                 >=0 index into e.
     e[i] = [[rule_i...], [message_i...]];  r[j] = {"t","w","q","tl"?,"note"?}
     Parts are flat int coordinate deltas chained across the file (features sorted spatially)."""
@@ -359,7 +365,7 @@ def pack_streets(feats, survey_years):
     msgs, msg_i, rules, rule_i, ents, ent_i = [], {}, [], {}, [], {}
     ox, oy = -97.95, 30.08
     CODE = {"Z": -1, "N": -2, "U": -3, "M": -4}
-    NO_ROOM = {"lane": -5, "bike": -6, "narrow": -7, "tight": -8, "nodata": -9}
+    NO_ROOM = {"lane": -5, "bike": -6, "narrow": -7, "tight": -8, "nodata": -9, "driveways": -10, "busy": -11}
 
     def intern(lst, idx, key, val):
         i = idx.get(key)
@@ -390,7 +396,8 @@ def pack_streets(feats, survey_years):
         ni = intern(names, name_i, p["st"], p["st"])
         g = f["geometry"]
         parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
-        row = [ni, p.get("blk", -1), side_code(p["L"]), side_code(p["R"]), p.get("w", -1), p.get("pk", 0)]
+        row = [ni, p.get("blk", -1), side_code(p["L"]), side_code(p["R"]), p.get("w", -1), p.get("pk", 0),
+               min(p.get("spL", -1), 99), min(p.get("spR", -1), 99)]
         for line in parts:
             flat = []
             for x, y in line:
@@ -399,7 +406,7 @@ def pack_streets(feats, survey_years):
                 px, py = ix, iy
             row.append(flat)
         out.append(row)
-    return {"v": 6, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
+    return {"v": 7, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
 
 
 def write(path, obj):

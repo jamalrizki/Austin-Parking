@@ -91,6 +91,35 @@ def fetch_query(name, url, where, fields, geometry=True):
     return {"type": "FeatureCollection", "features": feats}
 
 
+CURB_CUTS = f"{ARCGIS}/impervious_cover_2023/FeatureServer/0"
+
+
+def fetch_curb_cuts(path):
+    """Driveways and parking lots from the city's impervious-cover survey (aerial imagery up to 2023).
+    Written as JSON lines [feature, outer_ring] to keep memory flat (~570k polygons)."""
+    where = "FEATURE IN ('Paved Driveway','Unpaved Driveway','Paved Parking','Unpaved Parking')"
+    offset, n = 0, 0
+    with open(path, "w") as out:
+        while True:
+            q = urllib.parse.urlencode({
+                "where": where, "outFields": "FEATURE", "outSR": 4326, "f": "json", "geometryPrecision": 6,
+                "maxAllowableOffset": 0.000005, "orderByFields": "OBJECTID", "resultOffset": offset, "resultRecordCount": 2000,
+            })
+            got = get(f"{CURB_CUTS}/query?{q}").get("features", [])
+            for f in got:
+                rings = (f.get("geometry") or {}).get("rings")
+                if rings:
+                    out.write(json.dumps([f["attributes"]["FEATURE"], rings[0]], separators=(",", ":")) + "\n")
+                    n += 1
+            offset += len(got)
+            if offset % 50000 < 2000:
+                print(f"  curb_cuts: {offset}")
+            if len(got) < 2000:
+                break
+    print(f"  curb_cuts: {n} polygons")
+    return n
+
+
 def fetch_centerline(poly):
     wkt = "MULTIPOLYGON(((" + ",".join(f"{x} {y}" for x, y in poly) + ")))"
     feats, offset, page = [], 0, 5000
@@ -144,6 +173,8 @@ def main():
                       "SEGMENT_ID,CROSS_SECTION_DETAIL,CROSS_SECTION_GENERAL,BICYCLE_FACILITY,TOTAL_LANE_COUNT,PAVEMENT_WIDTH",
                       geometry=False)
     (RAW / "ctn.json").write_text(json.dumps([f["properties"] for f in ctn["features"]]))
+    if fetch_curb_cuts(RAW / "curb_cuts.jsonl") < 400000:
+        sys.exit("ERROR: curb-cut fetch looks incomplete")
     out["centerline"] = fetch_centerline(poly)
     out["osm"] = fetch_osm(poly)
     for name, fc in out.items():
