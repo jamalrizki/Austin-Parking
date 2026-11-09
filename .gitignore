@@ -7,3 +7,5 @@ node_modules/
 .env
 pipeline/models/
 pipeline/cars/tiles/
+pipeline/cars/run.log
+pipeline/cars/progress/
