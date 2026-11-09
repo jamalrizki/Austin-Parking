@@ -1,4 +1,4 @@
-import { evaluate, meetsWindow, nowIndex, toIndex, fromIndex, fmtUntil } from "./engine.js";
+import { evaluate, evaluateSide, meetsWindow, nowIndex, toIndex, fromIndex, fmtUntil } from "./engine.js";
 
 const REPO = "jamalrizki/Austin-Parking";
 const PARK_ATX = "https://parkatx.com";
@@ -10,7 +10,7 @@ const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-const state = { data: null, streets: null, types: {}, t: nowIndex(), live: true, filter: "any", selected: null };
+const state = { data: null, streets: null, compassSide: null, types: {}, t: nowIndex(), live: true, filter: "any", selected: null };
 const saved = (() => { try { return localStorage.getItem("minWindow"); } catch { return null; } })();
 if (saved) state.filter = saved;
 
@@ -29,6 +29,7 @@ window.parkingMap = map; // handy for debugging in devtools
 const getJSON = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(`${u} ${r.status}`); return r.json(); });
 const dataReady = getJSON("data/segments.json");
 
+const CLICK_LAYERS = ["zones", "side-L", "side-R", "side-L-none", "side-R-none"];
 const width = (base) => ["interpolate", ["linear"], ["zoom"], 12, base * 0.5, 15, base, 18, base * 2.4];
 // Colours live in feature-state so changing the time only updates states, never re-uploads geometry.
 const C = ["feature-state", "c"];
@@ -47,26 +48,35 @@ map.on("load", async () => {
   map.addLayer({ id: "areas-line", type: "line", source: "areas",
     paint: { "line-color": "#60a5fa", "line-opacity": 0.25, "line-width": 1, "line-dasharray": [2, 2] } });
 
+  // Every street side from the city sign inventory. Each side is its own layer, offset ~5 m
+  // from the centreline (same place the city's curb zones sit). Colour comes from feature-state
+  // for sides with sign rules; "no parking signs" sides default to green, "no records" are dashed grey.
   map.addSource("streets", { type: "geojson", data: { type: "FeatureCollection", features: [] }, tolerance: 0.5 });
-  map.addLayer({ id: "centre", type: "line", source: "streets", minzoom: 12,
-    layout: { "line-cap": "butt" },
-    paint: { "line-color": "#a3abb8", "line-width": ["case", ["has", "cov"], 1, 2],
-             "line-opacity": ["case", ["has", "cov"], 0.3, 0.75], "line-dasharray": [1.5, 1.5] } });
+  const sideOffset = (dir) => ["interpolate", ["exponential", 2], ["zoom"], 12, 0.3 * dir, 16, 2.7 * dir, 17, 5.4 * dir, 19, 21.6 * dir];
+  for (const [S, dir] of [["L", -1], ["R", 1]]) {
+    const code = ["get", S];
+    map.addLayer({ id: `side-${S}`, type: "line", source: "streets", minzoom: 11,
+      filter: ["any", ["==", code, -2], [">=", code, 0]],
+      layout: { "line-cap": "butt" },
+      paint: { "line-color": ["match", ["coalesce", ["feature-state", `${S}c`], "green"],
+                 "green", COLORS.green, "amber", COLORS.amber, "red", COLORS.red, COLORS.grey],
+               "line-width": width(2.6), "line-offset": sideOffset(dir),
+               "line-opacity": ["case", ["boolean", ["feature-state", `${S}d`], false], 0.18, 0.9] } });
+    map.addLayer({ id: `side-${S}-none`, type: "line", source: "streets", minzoom: 12, filter: ["==", code, -3],
+      layout: { "line-cap": "butt" },
+      paint: { "line-color": "#a3abb8", "line-width": 1.6, "line-offset": sideOffset(dir), "line-opacity": 0.7, "line-dasharray": [1.5, 1.5] } });
+  }
   map.addLayer({ id: "sel-st", type: "line", source: "streets", filter: ["==", ["id"], -1],
-    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "centre");
+    paint: { "line-color": "#ffffff", "line-width": width(9), "line-opacity": 0.3 } }, "side-L");
 
   map.addSource("seg", { type: "geojson", data: fc });
-  map.addLayer({ id: "osm", type: "line", source: "seg", filter: ["==", ["get", "k"], "o"],
-    layout: { "line-cap": "round" },
-    paint: { "line-color": color, "line-width": width(3), "line-opacity": opacity,
-             "line-offset": ["interpolate", ["linear"], ["zoom"], 13, ["*", ["get", "off"], 1.5], 17, ["*", ["get", "off"], 6]] } });
   map.addLayer({ id: "zones", type: "line", source: "seg", filter: ["==", ["get", "k"], "z"],
     layout: { "line-cap": "round" },
     paint: { "line-color": color, "line-width": width(3.5), "line-opacity": opacity } });
   map.addLayer({ id: "sel", type: "line", source: "seg", filter: ["==", ["id"], -1],
-    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "osm");
+    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "zones");
 
-  for (const id of ["zones", "osm", "centre"]) {
+  for (const id of CLICK_LAYERS) {
     map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
     map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
   }
@@ -77,25 +87,28 @@ map.on("load", async () => {
 
 async function loadStreets() {
   try {
-    const [{ decodeStreets }, packed] = await Promise.all([import("./streets.js"), getJSON("data/streets.json")]);
-    state.streets = decodeStreets(packed);
-    map.getSource("streets").setData(state.streets);
+    const [mod, packed] = await Promise.all([import("./streets.js"), getJSON("data/streets.json")]);
+    state.compassSide = mod.compassSide;
+    state.streets = mod.decodeStreets(packed);
+    map.getSource("streets").setData(state.streets.fc);
     streetIndex = null; // rebuild search index with all streets
+    renderStreets();
   } catch (e) {
-    toast("Couldn't load the street base layer; coloured curbs still work.");
+    console.error(e);
+    toast("Couldn't load the street layer; coloured curbs still work.");
   }
 }
 
 function onMapClick(e) {
   const pad = 10;
   const box = [[e.point.x - pad, e.point.y - pad], [e.point.x + pad, e.point.y + pad]];
-  const hits = map.queryRenderedFeatures(box, { layers: ["zones", "osm", "centre"] });
+  const hits = map.queryRenderedFeatures(box, { layers: CLICK_LAYERS.filter((l) => map.getLayer(l)) });
   if (!hits.length) { closeCard(); return; }
-  // Prefer city zones, then OSM, then centreline.
-  const rank = { zones: 0, osm: 1, centre: 2 };
-  hits.sort((a, b) => rank[a.layer.id] - rank[b.layer.id]);
+  // City curb zones first, then signed street sides; nearest-drawn wins among equals.
+  hits.sort((a, b) => (a.layer.id === "zones" ? 0 : 1) - (b.layer.id === "zones" ? 0 : 1));
   const h = hits[0];
-  openCard(h.layer.id === "centre" ? "streets" : "seg", h.id);
+  if (h.layer.id === "zones") openCard("seg", h.id);
+  else openCard("streets", h.id, h.layer.id.includes("-L") ? "L" : "R");
 }
 
 // ---------- evaluation + render ----------
@@ -107,18 +120,36 @@ function render() {
     const r = evaluate(feats[i].properties, state.types, state.t);
     map.setFeatureState({ source: "seg", id: i }, { c: r.color, dim: !meetsWindow(r, state.filter, state.t) });
   }
-  if (state.selected) openCard(state.selected.src, state.selected.id);
+  renderStreets();
+  if (state.selected) openCard(state.selected.src, state.selected.id, state.selected.side);
+}
+
+// Only sides with sign rules change with time; "no parking signs" sides are always free.
+function renderStreets() {
+  if (!state.streets) return;
+  const { fc, tables, withRules } = state.streets;
+  for (const id of withRules) {
+    const p = fc.features[id].properties;
+    const st = {};
+    for (const S of ["L", "R"]) {
+      if (p[S] < 0) continue;
+      const r = evaluateSide(p[S], tables, state.types, state.t);
+      st[`${S}c`] = r.color;
+      st[`${S}d`] = !meetsWindow(r, state.filter, state.t);
+    }
+    map.setFeatureState({ source: "streets", id }, st);
+  }
 }
 
 // ---------- card ----------
-function openCard(src, id) {
-  const f = src === "streets" ? state.streets?.features[id] : state.data.features[id];
+function openCard(src, id, side) {
+  const f = src === "streets" ? state.streets?.fc.features[id] : state.data.features[id];
   if (!f) return;
-  state.selected = { src, id };
+  state.selected = { src, id, side };
   map.setFilter("sel", ["==", ["id"], src === "seg" ? id : -1]);
   map.setFilter("sel-st", ["==", ["id"], src === "streets" ? id : -1]);
-  const p = f.properties;
-  const r = evaluate(p, state.types, state.t);
+  const p = src === "streets" ? { ...f.properties, side: state.compassSide(f.geometry, side) } : f.properties;
+  const r = src === "streets" ? evaluateSide(p[side], state.streets.tables, state.types, state.t) : evaluate(p, state.types, state.t);
   const meta = state.data.meta;
   let until = "";
   if (r.color === "green" || r.color === "amber") until = r.until == null ? "Free all week (no change in the next 8 days)" : `Free until ${fmtUntil(state.t, r.until)}`;
@@ -136,13 +167,13 @@ function openCard(src, id) {
     if (p.cmt) rows.push(["City note", p.cmt]);
     rows.push(["Zone ID", p.id]);
   }
-  if (p.k === "o") rows.push(["OSM way", `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(p.osm)}" target="_blank" rel="noopener">${esc(p.osm)}</a>`]);
-  rows.push(["Source", srcName]);
+  const sy = state.streets?.tables.surveyYears;
+  rows.push(["Source", src === "streets" ? `City of Austin sign inventory${sy ? ` (collected ${sy[0]}–${sy[2]})` : ""}` : srcName]);
   rows.push(["Data fetched", localDate(meta.built_from_fetch)]);
 
   const issue = new URL(`https://github.com/${REPO}/issues/new`);
   issue.searchParams.set("title", `Data problem: ${p.st || "street"} ${p.blk || ""} ${p.side || ""}`.trim());
-  issue.searchParams.set("body", `Location: ${p.st} ${where}\nMap says: ${r.title} — ${r.reason}\nFeature: ${p.k}:${p.id || p.osm || "street"}\nWhen viewed: ${describeTime()}\n\nWhat the signs actually say:\n`);
+  issue.searchParams.set("body", `Location: ${p.st} ${where}\nMap says: ${r.title} — ${r.reason}\nFeature: ${src === "streets" ? `street ${p.st} ${p.blk || ""} ${side}` : `zone ${p.id}`}\nWhen viewed: ${describeTime()}\n\nWhat the signs actually say:\n`);
 
   $("cardBody").innerHTML = `
     <h2>${esc(p.st || "Street")}</h2>
@@ -151,7 +182,8 @@ function openCard(src, id) {
     ${until ? `<p><strong>${esc(until)}</strong>${state.live ? "" : ` <span style="color:var(--muted)">(${esc(describeTime())})</span>`}</p>` : ""}
     <p>${esc(r.reason)}</p>
     ${r.caveat ? `<p class="caveat">${esc(r.caveat)}</p>` : ""}
-    <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${k === "OSM way" ? v : esc(v)}</dd>`).join("")}</dl>
+    ${r.signs && r.signs.length ? `<p class="signs-h">Signs on this side</p><ul class="signs">${r.signs.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>` : ""}
+    <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
     <div class="links">
       ${r.cat === "paid" ? `<a href="${PARK_ATX}" target="_blank" rel="noopener">Pay with Park ATX</a>` : ""}
       <a href="${esc(issue.toString())}" target="_blank" rel="noopener">Report a problem with this street</a>
@@ -276,7 +308,7 @@ function buildStreetIndex() {
     }
   };
   state.data.features.forEach(add);
-  if (state.streets) state.streets.features.forEach(add);
+  if (state.streets) state.streets.fc.features.forEach(add);
   return [...m.values()];
 }
 

@@ -172,3 +172,33 @@ Jamal asked for all of Austin rather than East Austin first.
   packed `streets.json` loaded after first paint. Street geometry is rounded to ~1 m and simplified
   within 1.5 m; zone/OSM geometry ~1 m and 0.5 m.
 - Street segment IDs are no longer shipped to the browser (they were debug-only and cost ~150 KB).
+
+## Revert of "free unless signed" (2026-11-08)
+
+Jamal rejected recolouring unrecorded streets green from inference alone. Reverted (aed48d9).
+
+## City sign inventory (2026-11-08)
+
+`Sign_Assets_Maint_Public_View` (item 14445469b72342788bffa280fd356094): 268,087 sign assets
+(layer 0: MUTCD code, SIGN_MESSAGE, PHOTO_URL, DATA_COLLECTION_DATE, ASSET_LOCATION_ID) and 78,398
+sign locations (layer 1: SEGMENT_ID, coordinates). Mostly collected 2021, updated through 2026.
+
+- 33,033 active signs mention PARK. `pipeline/signs.py` classifies the text: 24,800 become block
+  rules (no parking 20.5k, permit 2.1k, pay 1.7k, time limit 270), 1,085 are spot signs (ADA,
+  loading, bus stop, "here to corner": listed on the card, don't colour the block), the rest are
+  street names / info. 22 rule signs are unreadable and render grey.
+- Signs are tied to segments via ASSET_LOCATION_ID -> SEGMENT_ID (re-linked to the nearest street
+  within 25 m if > 30 m away). Side of street = which side of the centreline the sign point is on.
+- **Survey coverage:** inside Austin full-purpose city limits only 2.4% of segments have no sign
+  records near them. Outside city limits (Pflugerville, West Lake Hills, county roads) ~98% have
+  none: the city doesn't keep those streets' signs. The map now covers city limits only
+  (`BOUNDARIES_jurisdictions`, `AUSTIN FULL PURPOSE`).
+- A block counts as surveyed if it has sign records on it or within 30 m of either end.
+- **Divided roads:** one-way carriageways (one_way FT/TF) whose side has no addresses and faces the
+  same street's opposite carriageway within 45 m are median sides and are not drawn (2,854 sides).
+- Mapillary (token in `.env`) was compared: in a 1.5 x 1 km East Austin box it classified 5 parking
+  signs vs 654 in the city inventory. Not used.
+- OpenStreetMap curb tags are no longer shown (second, unofficial source; conflicts only).
+
+Per street side (inside city limits): no parking signs on record 44,197; sign rules 7,277;
+city curb zones 2,734; median 2,854; no sign records 1,302.

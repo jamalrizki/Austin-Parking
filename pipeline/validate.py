@@ -10,7 +10,7 @@ STREETS = ROOT / "public" / "data" / "streets.json"
 MAX_MB = 5.0
 MAX_STREETS_MB = 4.0
 MIN = {"z": 4000}  # well below current count (5,617); catches partial fetches
-MIN_STREETS = 40000  # currently ~49,000
+MIN_STREETS = 25000  # currently ~29,000 inside Austin city limits
 QUALITY = {"ok", "one", "conflict", "none", "event", "complex"}
 
 errors = []
@@ -21,8 +21,13 @@ ssize = STREETS.stat().st_size / 1e6
 if ssize > MAX_STREETS_MB:
     errors.append(f"streets.json is {ssize:.2f} MB (limit {MAX_STREETS_MB})")
 streets = json.loads(STREETS.read_text())
-if streets.get("v") != 3:
-    errors.append(f"streets.json format v{streets.get('v')} (expected 3)")
+if streets.get("v") != 5:
+    errors.append(f"streets.json format v{streets.get('v')} (expected 5)")
+unknown_sides = sum((r[2] == -3) + (r[3] == -3) for r in streets["f"])
+if unknown_sides / max(1, 2 * len(streets["f"])) > 0.10:
+    errors.append(f"{unknown_sides} street sides have no sign records (>10%); sign fetch may be incomplete")
+if len(streets.get("m", [])) < 500 or len(streets.get("e", [])) < 500:
+    errors.append("too few sign messages/entries in streets.json; sign fetch may be incomplete")
 if len(streets["f"]) < MIN_STREETS:
     errors.append(f"only {len(streets['f'])} streets (expected >= {MIN_STREETS}); fetch may be incomplete")
 fc = json.loads(SEG.read_text())

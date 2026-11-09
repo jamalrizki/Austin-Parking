@@ -1,8 +1,9 @@
 # Austin Free Parking Finder
 
-A phone-friendly map that answers one question: **where can I park on the street for free, right now or at a time I pick?** Covers all of Austin. No account, no ads, no pop-ups.
+A phone-friendly map that answers one question: **where can I park on the street for free, right now or at a time I pick?** Covers Austin city limits. No account, no ads, no pop-ups.
 
-- Green = free now · Amber = free but ends within 2 hours · Red = paid, permit-only, or no parking · Dashed grey = unknown (never shown as free)
+- Each side of each street is coloured from the city's own records: curb zones (meters, permit zones) and its inventory of posted parking signs.
+- Green = free now (no parking signs on that side in the city's sign records, or a sign/zone that allows parking now) · Amber = free but ends within 2 hours · Red = no parking, paid, or permit-only now · Dashed grey = no city sign records for that block
 - Each side of the street is coloured separately when the city records it that way.
 - Tap any street to see why it's that colour, where the data came from, and when it was fetched.
 - **Always check posted signs.** This map is a guide, not a guarantee.
@@ -25,7 +26,8 @@ Files are `.json` rather than `.geojson` so static hosts reliably gzip them.
 | Curb zones with hours, paid/permit/no-parking type, side of street | City of Austin `Parking_Inventory_FME_UPDATE_view` (ArcGIS) |
 | Street centerlines (grey "unknown" base) | City of Austin Street Centerline `8hf2-pdmb` |
 | Pay-to-park area outlines | City of Austin `COA_Pay_To_Park_Areas` |
-| Community curb tags where the city has none | OpenStreetMap `parking:*` |
+| Posted parking signs, per side of street (no parking, permit, pay, time limit) | City of Austin Sign Inventory (`Sign_Assets_Maint_Public_View`) |
+| City limits | City of Austin `BOUNDARIES_jurisdictions` (full purpose) |
 | Meter holidays, rates | City paid-parking page, encoded in `rules/districts.json` |
 
 ## Run it locally

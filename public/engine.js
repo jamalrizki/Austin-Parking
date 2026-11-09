@@ -144,15 +144,53 @@ export function evaluateOsm(p) {
   return { ...m, reason: p.why, until: null, caveat: "Community-mapped in OpenStreetMap; not verified by the city." };
 }
 
+// ---- street sides from the city sign inventory ----
+// code: -2 surveyed, no parking signs; -3 no sign records; >=0 entry index (see public/streets.js).
+const RANK = { red: 3, grey: 2, amber: 1, green: 0 };
+const group = (c) => (c === "green" || c === "amber" ? "free" : c);
+
+function ruleResults(rules, types, t) {
+  return rules.map((r) => evaluate({ k: "z", t: r.t, s: null, w: r.w, q: r.q, tl: r.tl,
+    tlr: r.tl ? (r.tl % 60 ? `${r.tl} min` : `${r.tl / 60} hr`) : null, hrs: "the hours on the sign", note: r.note }, types, t));
+}
+
+function combine(results) {
+  let worst = results[0];
+  for (const r of results) if (RANK[r.color] > RANK[worst.color]) worst = r;
+  const free = results.filter((r) => r.color === "green" || r.color === "amber");
+  return { ...worst, freeMins: worst.color === "green" || worst.color === "amber" ? Math.min(...free.map((r) => r.freeMins)) : 0 };
+}
+
+export function evaluateSide(code, tables, types, t) {
+  const surveyed = tables.surveyYears ? `${tables.surveyYears[0]}–${tables.surveyYears[2]}` : "";
+  if (code === -3 || code == null || code === -1) {
+    return { color: "grey", title: "No sign records", until: null, freeMins: 0, signs: [],
+      reason: "The city has no sign records for this block, so this map can't tell what's posted here." };
+  }
+  const entry = code >= 0 ? tables.entries[code] : [[], []];
+  const signs = entry[1].map((i) => tables.messages[i]);
+  const rules = entry[0].map((i) => tables.rules[i]);
+  if (!rules.length) {
+    return { color: "green", title: "No parking signs", until: null, freeMins: Infinity, signs, cat: "nosigns",
+      reason: `The city's sign records (collected ${surveyed}) show no parking-restriction signs on this side of the block. Austin doesn't post "free parking" signs; an unsigned curb is open parking.`
+        + (signs.length ? " The signs listed below cover only a few spaces." : "") };
+  }
+  const now = combine(ruleResults(rules, types, t));
+  const cands = [...new Set(ruleResults(rules, types, t).map((r) => r.until).filter((x) => x != null))].sort((a, b) => a - b);
+  let until = null;
+  for (const c of cands) {
+    if (group(combine(ruleResults(rules, types, c)).color) !== group(now.color)) { until = c; break; }
+  }
+  const freeMins = now.color === "green" || now.color === "amber" ? Math.min(now.freeMins, until == null ? Infinity : until - t) : 0;
+  let color = now.color, title = now.title;
+  if (color === "green" && freeMins < AMBER_MINUTES) { color = "amber"; title = title.replace("Free now", "Free, ending soon"); }
+  return { color, title, reason: now.reason, until, freeMins, signs, cat: now.cat,
+    caveat: "Based on posted signs in the city's sign records. A sign may cover only part of the block." };
+}
+
 export function evaluateCenterline(p) {
-  return {
-    color: "grey",
-    title: "Unknown — check signs",
-    reason: p.cov
-      ? "Some curbs on this block are in city records (coloured lines beside it); anything not coloured is unrecorded."
-      : "No paid, permit or restriction record for this street in city data. It may well be free, but this map won't guess.",
-    until: null,
-  };
+  return { color: "grey", title: "No sign records", until: null,
+    reason: "The city has no sign records for this block, so this map can't tell what's posted here." };
 }
 
 export function evaluate(p, types, t) {

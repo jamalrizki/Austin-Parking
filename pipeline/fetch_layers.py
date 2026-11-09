@@ -20,9 +20,12 @@ ARCGIS_LAYERS = {
     "zones": f"{ARCGIS}/Parking_Inventory_FME_UPDATE_view/FeatureServer/0",
     # Pay-to-park area polygons with per-day hours. District fallback / context.
     "pay_areas": f"{ARCGIS}/COA_Pay_To_Park_Areas/FeatureServer/9",
+    # Austin full-purpose city limits: the city's parking zones and signs only cover these streets.
+    "city_limits": f"{ARCGIS}/BOUNDARIES_jurisdictions/FeatureServer/0",
     # RPP district polygons (context only).
     "rpp_districts": f"{ARCGIS}/Residential_Parking_Permits/FeatureServer/1",
 }
+SIGNS = f"{ARCGIS}/Sign_Assets_Maint_Public_View/FeatureServer"
 SOCRATA_CENTERLINE = "https://data.austintexas.gov/resource/8hf2-pdmb.geojson"
 OVERPASS = "https://overpass-api.de/api/interpreter"
 
@@ -45,13 +48,16 @@ def area_polygon():
     return gj["features"][0]["geometry"]["coordinates"][0]  # [[lon, lat], ...]
 
 
+ARCGIS_WHERE = {"city_limits": "JURISDICTION_LABEL='AUSTIN FULL PURPOSE'"}
+
+
 def fetch_arcgis(name, url):
     meta = get(f"{url}?f=json")
     page = min(meta.get("maxRecordCount", 1000), 2000)
     feats, offset = [], 0
     while True:
         q = urllib.parse.urlencode({
-            "where": "1=1", "outFields": "*", "outSR": 4326, "f": "geojson",
+            "where": ARCGIS_WHERE.get(name, "1=1"), "outFields": "*", "outSR": 4326, "f": "geojson",
             "orderByFields": "OBJECTID", "resultOffset": offset, "resultRecordCount": page,
         })
         chunk = get(f"{url}/query?{q}")
@@ -63,6 +69,25 @@ def fetch_arcgis(name, url):
         offset += len(got)
         if not got:
             break
+    return {"type": "FeatureCollection", "features": feats}
+
+
+def fetch_query(name, url, where, fields, geometry=True):
+    """Paged ArcGIS query with a filter; geometry optional (attribute-only tables are much smaller)."""
+    feats, offset, page = [], 0, 2000
+    while True:
+        q = urllib.parse.urlencode({
+            "where": where, "outFields": fields, "outSR": 4326, "returnGeometry": str(geometry).lower(),
+            "f": "geojson", "orderByFields": "OBJECTID_1", "resultOffset": offset, "resultRecordCount": page,
+        })
+        got = get(f"{url}/query?{q}").get("features", [])
+        feats += got
+        if len(feats) % 20000 < page:
+            print(f"  {name}: {len(feats)}")
+        if len(got) < page:
+            break
+        offset += len(got)
+    print(f"  {name}: {len(feats)}")
     return {"type": "FeatureCollection", "features": feats}
 
 
@@ -107,6 +132,13 @@ def main():
     out = {}
     for name, url in ARCGIS_LAYERS.items():
         out[name] = fetch_arcgis(name, url)
+    # Active parking signs (city sign inventory) and every sign location's street segment.
+    # Locations of ANY sign tell us which blocks the city's sign survey covered.
+    out["parking_signs"] = fetch_query(
+        "parking_signs", f"{SIGNS}/0", "ASSET_STATUS=1 AND upper(SIGN_MESSAGE) like '%PARK%'",
+        "SIGN_MESSAGE,MUTCD_CODE,ASSET_LOCATION_ID,ASSET_CATEGORY,PHOTO_URL,DATA_COLLECTION_DATE")
+    out["sign_locations"] = fetch_query(
+        "sign_locations", f"{SIGNS}/1", "1=1", "ASSET_LOCATION_ID,SEGMENT_ID,DATA_COLLECTION_DATE")
     out["centerline"] = fetch_centerline(poly)
     out["osm"] = fetch_osm(poly)
     for name, fc in out.items():

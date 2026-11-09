@@ -119,3 +119,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   .seg { flex: 1 1 100%; justify-content: space-between; }
   .seg button { flex: 1; padding: 0 4px; }
 }
+.card .signs-h { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.card ul.signs { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.card ul.signs li { font-size: 12px; font-family: ui-monospace, Menlo, monospace; background: #1f2430; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }

@@ -17,6 +17,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from hours import HoursError, minute_set, parse_human_hours, parse_json_hours  # noqa: E402
+from sides import build_side_info  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RAW = ROOT / "pipeline" / "raw"
@@ -236,9 +237,11 @@ def build_zones(zone_types, pay_areas, unknown_types):
 
 
 # ---------- centerline ----------
-def build_centerline(excl, covered):
+def build_centerline(excl, covered, pay_areas):
     name_re = re.compile("|".join(excl["name_patterns"]), re.I)
-    feats, dropped = [], 0
+    feats, dropped, kept, kept_props = [], 0, {}, {}
+    limits = [poly for f in load("city_limits")["features"] if f.get("geometry") for poly in polys_of(f["geometry"])]
+    outside = 0
     for f in load("centerline")["features"]:
         p, g = f["properties"], f["geometry"]
         rc = str(p.get("road_class") or "0")
@@ -247,6 +250,10 @@ def build_centerline(excl, covered):
         if rc in excl["road_class"] or bs not in excl["built_status_keep"] or name_re.search(name) or not g:
             dropped += 1
             continue
+        mid = midpoint(g)
+        if not mid or not any(point_in_poly(mid, rings) for rings in limits):
+            outside += 1  # other cities / county roads: Austin's zone and sign records don't cover them
+            continue
         lo = [p.get(k) for k in ("left_from_address", "left_to_address", "right_from_address", "right_to_address")]
         nums = [int(float(x)) for x in lo if x not in (None, "", "0")]
         rng = (min(nums) // 100) if nums else None  # hundred block, e.g. 11 -> "1100 block"
@@ -254,12 +261,18 @@ def build_centerline(excl, covered):
         props = {"st": name.title(), "seg": seg}
         if rng is not None:
             props["blk"] = rng
-        if seg in covered:
-            props["cov"] = 1
+        kept[seg] = g
+        kept_props[seg] = p
         lines = [simplify(rnd5(line), 1.5) for line in lines_of(g)]
         geom = {"type": "LineString", "coordinates": lines[0]} if len(lines) == 1 else {"type": "MultiLineString", "coordinates": lines}
         feats.append({"type": "Feature", "geometry": geom, "properties": props})
-    return feats, dropped
+    sides, stats = build_side_info(kept, pay_areas, kept_props)
+    stats["outside_city_limits"] = outside
+    for f in feats:
+        seg = f["properties"]["seg"]
+        f["properties"]["L"] = sides[(seg, "L")]
+        f["properties"]["R"] = sides[(seg, "R")]
+    return feats, dropped, stats
 
 
 # ---------- OSM ----------
@@ -319,20 +332,38 @@ def build_osm(excl, zone_index):
     return feats, skipped_near_city, raw.get("osm_base_timestamp")
 
 
-def pack_streets(feats):
+def pack_streets(feats, survey_years):
     """Compact street format, decoded in public/streets.js.
-    {"v":3, "s":1e5, "o":[x0,y0], "n":[names],
-     "f":[[name_i, hundred_block(-1 = none), cov(0/1), part, part...], ...]}
-    Each part is a flat int list of coordinate deltas. Deltas chain across the whole file
-    (features are sorted spatially), so numbers stay small and gzip well."""
+    {"v":5, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
+     "sy":[first, median, last survey year],
+     "f":[[name_i, hundred_block(-1 = none), left, right, part, part...], ...]}
+    left/right: -1 curb zones cover this side, -2 surveyed with no parking signs,
+                -3 no city sign records, -4 median side of a divided road, >=0 index into e.
+    e[i] = [[rule_i...], [message_i...]];  r[j] = {"t","w","q","tl"?,"note"?}
+    Parts are flat int coordinate deltas chained across the file (features sorted spatially)."""
     S = 100000
     names, name_i = [], {}
+    msgs, msg_i, rules, rule_i, ents, ent_i = [], {}, [], {}, [], {}
     ox, oy = -97.95, 30.08
+    CODE = {"Z": -1, "N": -2, "U": -3, "M": -4}
+
+    def intern(lst, idx, key, val):
+        i = idx.get(key)
+        if i is None:
+            i = idx[key] = len(lst)
+            lst.append(val)
+        return i
+
+    def side_code(v):
+        if isinstance(v, str):
+            return CODE[v]
+        r = [intern(rules, rule_i, json.dumps(x, sort_keys=True), {k: x[k] for k in x if x[k] is not None}) for x in v["rules"]]
+        m = [intern(msgs, msg_i, x, x) for x in v["msgs"]]
+        return intern(ents, ent_i, json.dumps([r, m]), [r, m])
 
     def key(f):
         g = f["geometry"]
         x, y = (g["coordinates"] if g["type"] == "LineString" else g["coordinates"][0])[0]
-        # 0.01-degree strips, snaking so consecutive features stay close
         row = int((y - oy) * 100)
         return (row, x if row % 2 == 0 else -x)
 
@@ -340,12 +371,10 @@ def pack_streets(feats):
     px, py = round(ox * S), round(oy * S)
     for f in sorted(feats, key=key):
         p = f["properties"]
-        ni = name_i.setdefault(p["st"], len(names))
-        if ni == len(names):
-            names.append(p["st"])
+        ni = intern(names, name_i, p["st"], p["st"])
         g = f["geometry"]
         parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
-        row = [ni, p.get("blk", -1), p.get("cov", 0)]
+        row = [ni, p.get("blk", -1), side_code(p["L"]), side_code(p["R"])]
         for line in parts:
             flat = []
             for x, y in line:
@@ -354,7 +383,7 @@ def pack_streets(feats):
                 px, py = ix, iy
             row.append(flat)
         out.append(row)
-    return {"v": 3, "s": S, "o": [ox, oy], "n": names, "f": out}
+    return {"v": 5, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
 
 
 def write(path, obj):
@@ -368,7 +397,7 @@ def main():
                  for f in load("pay_areas")["features"] if f.get("geometry")]
     unknown_types = {}
     zones, zindex, covered = build_zones(zone_types, pay_areas, unknown_types)
-    centre, dropped = build_centerline(excl, covered)
+    centre, dropped, side_stats = build_centerline(excl, covered, pay_areas)
     osm, osm_skipped, osm_ts = build_osm(excl, zindex)
     fetched = (RAW / "fetched_at.txt").read_text().strip()
     OUT.mkdir(parents=True, exist_ok=True)
@@ -379,9 +408,11 @@ def main():
           "meta": {"built_from_fetch": fetched, "osm_base": osm_ts,
                    "sources": {"zones": ZONE_SOURCE, "centerline": CENTERLINE_SOURCE, "osm": OSM_SOURCE},
                    "zone_types": zone_types},
-          "features": osm + zones}
+          # OSM community tags are no longer shipped: the city sign inventory covers ~98% of
+          # Austin's streets, and a second, unofficial source only produced conflicts.
+          "features": zones}
     write(OUT / "segments.json", fc)
-    write(OUT / "streets.json", pack_streets(centre))
+    write(OUT / "streets.json", pack_streets(centre, side_stats["survey_years"]))
     areas = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": f["geometry"]["type"], "coordinates": rnd(f["geometry"]["coordinates"])},
          "properties": {"name": f["properties"].get("AREA_NAME"), "hours": f["properties"].get("OP_HOURS")}}
@@ -391,7 +422,15 @@ def main():
     for z in zones:
         q[z["properties"]["q"]] = q.get(z["properties"]["q"], 0) + 1
     print(f"zones {len(zones)} quality {q}")
-    print(f"centerline kept {len(centre)} dropped {dropped} (covered by zones: {sum(1 for c in centre if c['properties'].get('cov'))})")
+    sc = {}
+    for c in centre:
+        for k in ("L", "R"):
+            v = c["properties"][k]
+            code = v if isinstance(v, str) else ("S-rules" if v["rules"] else "S-spot-only")
+            sc[code] = sc.get(code, 0) + 1
+    print(f"centerline kept {len(centre)} dropped {dropped}")
+    print(f"street sides {sc}  (Z curb zones, S signs, N surveyed/no parking signs, U no sign records)")
+    print(f"sign linking {side_stats}")
     print(f"osm sides {len(osm)} (ways skipped near city zones: {osm_skipped})")
     if unknown_types:
         print(f"WARNING unknown zone types: {unknown_types}")

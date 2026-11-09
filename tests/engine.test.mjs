@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { decodeStreets } from "../public/streets.js";
+import { evaluateSide } from "../public/engine.js";
 import { evaluate, toIndex, isMeterHoliday, meetsWindow, fmtUntil, nowIndex } from "../public/engine.js";
 
 const types = JSON.parse(readFileSync(new URL("../rules/zone_types.json", import.meta.url)));
@@ -144,16 +145,56 @@ test("real data: East Austin paid curbs red Mon-Sat 08:00-23:59, green Sunday an
   }
 });
 
-test("real data: citywide streets decode and always render grey", { skip: !existsSync(streetsPath) }, () => {
+test("real data: streets decode; sides follow the sign records", { skip: !existsSync(streetsPath) }, () => {
   const packed = JSON.parse(readFileSync(streetsPath));
-  const fc = decodeStreets(packed);
+  const { fc, tables, withRules } = decodeStreets(packed);
   assert.equal(fc.features.length, packed.f.length);
-  assert.ok(fc.features.length > 40000, `only ${fc.features.length} streets`);
+  assert.ok(fc.features.length > 25000, `only ${fc.features.length} streets`);
   for (const f of fc.features) {
     for (const [x, y] of f.geometry.type === "LineString" ? f.geometry.coordinates : f.geometry.coordinates.flat()) {
       assert.ok(x > -98.1 && x < -97.4 && y > 30.0 && y < 30.7, `street ${f.properties.st} decoded outside Austin: ${x},${y}`);
     }
   }
-  const sample = fc.features.filter((_, i) => i % 500 === 0);
-  for (const f of sample) assert.equal(evaluate(f.properties, {}, T(8, 12)).color, "grey");
+  const counts = {};
+  for (const f of fc.features) for (const S of ["L", "R"]) {
+    const code = f.properties[S];
+    const c = evaluateSide(code, tables, types, T(9, 12)).color;
+    if (code === -3) assert.equal(c, "grey", "no-records side must be grey");
+    if (code === -2) assert.equal(c, "green", "no-parking-signs side is green");
+    counts[c] = (counts[c] || 0) + 1;
+  }
+  assert.ok(withRules.length > 3000, `only ${withRules.length} streets with sign rules`);
+  assert.ok(counts.red > 3000, JSON.stringify(counts));
+});
+
+
+test("sign rules: no-parking sign with hours, permit sign, time limit, unknown", () => {
+  const tables = {
+    surveyYears: [2021, 2021, 2026],
+    messages: ["NO PARKING 7AM-7PM", "NO PARKING 6PM-8AM EXCEPT WITH PERMIT", "2 HOUR PARKING 7AM-7PM", "?"],
+    rules: [
+      { t: "No Parking", w: [0, 1, 2, 3, 4, 5, 6].map((d) => [d, 420, 1140]), q: "ok" },
+      { t: "Residential Parking Permit", w: [0, 1, 2, 3, 4, 5, 6].map((d) => [d, 1080, 1920]), q: "ok" },
+      { t: "Time Limited Parking", w: [0, 1, 2, 3, 4, 5, 6].map((d) => [d, 420, 1140]), q: "ok", tl: 120 },
+      { t: "No Parking", w: [], q: "none" },
+    ],
+    entries: [[[0], [0]], [[1], [1]], [[2], [2]], [[3], [3]], [[0, 1], [0, 1]], [[], [3]]],
+  };
+  const noon = T(9, 12), night = T(9, 22);
+  assert.equal(evaluateSide(0, tables, types, noon).color, "red");
+  const ev = evaluateSide(0, tables, types, night);
+  assert.equal(ev.color, "green");
+  assert.equal(ev.until, T(10, 7));
+  assert.equal(evaluateSide(1, tables, types, night).color, "red");
+  assert.equal(evaluateSide(1, tables, types, noon).color, "green");
+  assert.equal(evaluateSide(2, tables, types, noon).color, "green"); // 2 hr limit: exactly 120 min
+  assert.equal(evaluateSide(2, tables, types, noon).freeMins, 120);
+  assert.equal(evaluateSide(3, tables, types, noon).color, "grey");
+  // Both signs on one side: no parking by day + permit at night = never free without a permit.
+  assert.equal(evaluateSide(4, tables, types, noon).color, "red");
+  assert.equal(evaluateSide(4, tables, types, night).color, "red");
+  // Only spot signs (e.g. one ADA space): the rest of the side has no restriction signs.
+  assert.equal(evaluateSide(5, tables, types, noon).color, "green");
+  assert.equal(evaluateSide(-2, tables, types, noon).color, "green");
+  assert.equal(evaluateSide(-3, tables, types, noon).color, "grey");
 });
