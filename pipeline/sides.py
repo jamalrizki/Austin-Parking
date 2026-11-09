@@ -6,6 +6,12 @@ Per side, in priority order:
   N  the city's sign survey covered this block (it has other signs on record) and recorded
      no parking signs on this side
   U  no city sign records for this block at all -> unknown
+  X  no physical parking space, per the city's transportation network (CTN): the street is
+     listed without on-street parking, has a travel/bike lane at the curb, or is under 24 ft wide.
+     Only applied where no sign or curb zone says otherwise. Stored as ("X", reason).
+  W  no parking signs, but no evidence of physical room: no CTN record / width (W, "nodata"),
+     or pavement 24-27 ft with no parking lane listed (W, "tight"). Shown grey, never green.
+     Added after Jamal walked La Calma Dr and La Posada Dr (divided, not in CTN, no parking).
   M  median side of a divided road (one-way carriageway, no addresses on that side, the
      opposite carriageway of the same street right beside it) -> not drawn
 
@@ -128,7 +134,37 @@ def median_sides(kept, props, lines):
     return out
 
 
-def build_side_info(kept, pay_areas, props=None):
+NARROW_FT = 24      # calibrated: of CTN 2-lane streets under 24 ft, 3 have parking and 114 don't
+TIGHT_FT = 28       # 24-28 ft: mostly no parking on collectors; shown as a caveat, not a colour
+NO_ROOM_EDGES = {"T", "BL", "BBL", "PBL", "TL", "CTT", "OW", "TO"}
+BIKE_AT_CURB = {"Bike Lane", "Bike Lane - Buffered", "Bike Lane - Protected One-Way",
+                "Bike Lane - Protected Two-Way", "Bike Lane - Colored"}
+
+
+def physical(ctn_row):
+    """(room, reason, has_lane): room False = no physical parking space on either side."""
+    if not ctn_row:
+        return None, None, False
+    gen = (ctn_row.get("CROSS_SECTION_GENERAL") or "").upper()
+    det = (ctn_row.get("CROSS_SECTION_DETAIL") or "").upper()
+    width = ctn_row.get("PAVEMENT_WIDTH") or 0
+    bike = ctn_row.get("BICYCLE_FACILITY") or ""
+    edges = [t.strip() for t in det.split("-")] if det and det != "UNMARKED" else []
+    ends = {edges[0], edges[-1]} if edges else set()
+    if gen.endswith("-OP") or "P" in ends or "BL/P" in ends or bike == "Bike Lane - wParking":
+        return True, None, True
+    if gen.endswith("-N"):
+        return False, "lane", False
+    if ends and ends <= NO_ROOM_EDGES:
+        return False, "bike" if ends & {"BL", "BBL", "PBL"} else "lane", False
+    if bike in BIKE_AT_CURB and not ends:
+        return False, "bike", False
+    if 0 < width < NARROW_FT:
+        return False, "narrow", False
+    return None, None, False
+
+
+def build_side_info(kept, pay_areas, props=None, ctn=None):
     """kept: {segment_id(str): raw geometry} for streets shown on the map; props: centreline attributes.
     Returns (side_of_segment dict {(seg, 'L'|'R'): code_or_entry}, stats)."""
     lines = {s: lines_of(g) for s, g in kept.items()}
@@ -228,6 +264,15 @@ def build_side_info(kept, pay_areas, props=None):
         stats["signs_used"] += 1
 
     medians = median_sides(kept, props, lines) if props else set()
+    room, why, fits, fit_why = {}, {}, {}, {}
+    for seg in kept:
+        row = (ctn or {}).get(seg)
+        r, reason, has_lane = physical(row)
+        room[seg], why[seg] = r, reason
+        width = (row or {}).get("PAVEMENT_WIDTH") or 0
+        # Green needs positive evidence of space: a listed parking lane or >= 28 ft of pavement.
+        fits[seg] = has_lane or width >= TIGHT_FT
+        fit_why[seg] = "tight" if width else "nodata"
     stats["median_sides"] = len(medians)
     out = {}
     for seg in kept:
@@ -236,12 +281,19 @@ def build_side_info(kept, pay_areas, props=None):
                 out[(seg, side)] = "M"
             elif (seg, side) in zone_sides:
                 out[(seg, side)] = "Z"
+            elif (seg, side) in entries and entries[(seg, side)]["rules"]:
+                out[(seg, side)] = entries[(seg, side)]
+            elif room.get(seg) is False:
+                out[(seg, side)] = ("X", why[seg])
+                stats["no_room_sides"] = stats.get("no_room_sides", 0) + 1
+            elif seg not in surveyed:
+                out[(seg, side)] = "U"
+            elif not fits.get(seg):
+                out[(seg, side)] = ("W", fit_why[seg])
             elif (seg, side) in entries:
                 out[(seg, side)] = entries[(seg, side)]
-            elif seg in surveyed:
-                out[(seg, side)] = "N"
             else:
-                out[(seg, side)] = "U"
+                out[(seg, side)] = "N"
     years = sorted(datetime.datetime.fromtimestamp(t / 1000, datetime.timezone.utc).year for t in survey_dates)
     stats["survey_years"] = [years[0], years[len(years) // 2], years[-1]] if years else None
     return out, stats

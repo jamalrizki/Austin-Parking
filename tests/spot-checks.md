@@ -5,8 +5,8 @@ Any mismatch: fix the rule, or force the block grey and note why.
 
 | # | Date checked | Street, block, side | Map said (day/time viewed) | Signs say | Match? | Action |
 |---|---|---|---|---|---|---|
-| 1 | | | | | | |
-| 2 | | | | | | |
+| 1 | 2026-11-08 (Jamal, on foot) | La Calma Dr, 6100 block, both sides | One side green ("no parking signs") | No parking on either side; no space at the curb | No | Divided road, not in CTN (no width/lane data). Green now requires a listed parking lane or >= 28 ft pavement; this side is now grey "room unconfirmed". |
+| 2 | 2026-11-08 (Jamal, on foot) | La Posada Dr, 1000 block, both sides | One side green ("no parking signs") | No parking on either side; no space at the curb | No | Same cause and fix as #1. Other sides were already red from city No Parking signs. |
 | 3 | | | | | | |
 | 4 | | | | | | |
 | 5 | | | | | | |

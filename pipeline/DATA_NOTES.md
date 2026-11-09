@@ -202,3 +202,23 @@ sign locations (layer 1: SEGMENT_ID, coordinates). Mostly collected 2021, update
 
 Per street side (inside city limits): no parking signs on record 44,197; sign rules 7,277;
 city curb zones 2,734; median 2,854; no sign records 1,302.
+
+## Physical room to park (2026-11-08)
+
+Source: CTN `Comprehensive_Transportation_Network_Maint_Non_Edit_View` (SEGMENT_ID join; 53,280 of
+57,993 centreline segments matched). Fields used: CROSS_SECTION_GENERAL / _DETAIL, PAVEMENT_WIDTH,
+BICYCLE_FACILITY. No published legend for the cross-section codes; meanings were checked against
+our own sign/zone data: `P` edges carry most paid zones (parking lane); general suffix `-OP` pairs
+with `P-T-CL-T-P` (on-street parking) and `-N` with `T-CL-T` (none).
+
+Width calibration on CTN 2-lane streets with a parking flag: under 24 ft, 3 with parking vs 114
+without; 24-28 ft, 30 vs 154; 28 ft+, 2,456 vs 181.
+
+Rules (only where no sign rule or curb zone applies):
+- red "No parking space": `-N`, or travel/bike lane at both curbs with no P, or bike lane listed
+  with no lane data, or pavement < 24 ft.
+- green requires a listed parking lane or pavement >= 28 ft. Otherwise grey: 24-27 ft "room
+  unconfirmed", or no CTN width "no street-width data".
+
+Jamal's walk (La Calma Dr, La Posada Dr) found green sides with no physical parking. Both are
+divided roads absent from CTN; that is what prompted the >= 28 ft / parking-lane requirement.

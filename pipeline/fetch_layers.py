@@ -139,6 +139,11 @@ def main():
         "SIGN_MESSAGE,MUTCD_CODE,ASSET_LOCATION_ID,ASSET_CATEGORY,PHOTO_URL,DATA_COLLECTION_DATE")
     out["sign_locations"] = fetch_query(
         "sign_locations", f"{SIGNS}/1", "1=1", "ASSET_LOCATION_ID,SEGMENT_ID,DATA_COLLECTION_DATE")
+    # Transportation network: lane layout, on-street parking flag, pavement width per segment.
+    ctn = fetch_query("ctn", f"{ARCGIS}/Comprehensive_Transportation_Network_Maint_Non_Edit_View/FeatureServer/0", "1=1",
+                      "SEGMENT_ID,CROSS_SECTION_DETAIL,CROSS_SECTION_GENERAL,BICYCLE_FACILITY,TOTAL_LANE_COUNT,PAVEMENT_WIDTH",
+                      geometry=False)
+    (RAW / "ctn.json").write_text(json.dumps([f["properties"] for f in ctn["features"]]))
     out["centerline"] = fetch_centerline(poly)
     out["osm"] = fetch_osm(poly)
     for name, fc in out.items():

@@ -21,8 +21,8 @@ ssize = STREETS.stat().st_size / 1e6
 if ssize > MAX_STREETS_MB:
     errors.append(f"streets.json is {ssize:.2f} MB (limit {MAX_STREETS_MB})")
 streets = json.loads(STREETS.read_text())
-if streets.get("v") != 5:
-    errors.append(f"streets.json format v{streets.get('v')} (expected 5)")
+if streets.get("v") != 6:
+    errors.append(f"streets.json format v{streets.get('v')} (expected 6)")
 unknown_sides = sum((r[2] == -3) + (r[3] == -3) for r in streets["f"])
 if unknown_sides / max(1, 2 * len(streets["f"])) > 0.10:
     errors.append(f"{unknown_sides} street sides have no sign records (>10%); sign fetch may be incomplete")

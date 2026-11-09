@@ -161,8 +161,25 @@ function combine(results) {
   return { ...worst, freeMins: worst.color === "green" || worst.color === "amber" ? Math.min(...free.map((r) => r.freeMins)) : 0 };
 }
 
-export function evaluateSide(code, tables, types, t) {
+const NO_ROOM = {
+  [-5]: "The city's transportation network shows a travel lane at the curb and no parking lane here, so there's no space to park.",
+  [-6]: "The city's transportation network shows a bike lane at the curb here, so there's no space to park.",
+  [-7]: "The city's transportation network lists this street as under 24 ft wide: too narrow to park without blocking traffic.",
+};
+
+export function evaluateSide(code, tables, types, t, street = {}) {
   const surveyed = tables.surveyYears ? `${tables.surveyYears[0]}–${tables.surveyYears[2]}` : "";
+  if (code === -8 || code === -9) {
+    return { color: "grey", title: "Room to park unconfirmed", until: null, freeMins: 0, signs: [],
+      reason: (code === -8
+        ? `No parking signs on record, but the street is only ${street.w || "24–27"} ft wide and the city lists no parking lane, so parked cars may not fit.`
+        : "No parking signs on record, but the city has no street-width or lane data for this block (common on divided roads), so this map can't confirm there's room to park.") };
+  }
+  if (NO_ROOM[code]) {
+    return { color: "red", title: "No parking space", until: null, freeMins: 0, signs: [], reason: NO_ROOM[code] + (street.w ? ` (pavement ${street.w} ft)` : "") };
+  }
+  const narrow = street.w && street.w < 28 && !street.pk
+    ? `Narrow street (pavement ${street.w} ft): parking may only fit on one side, or not at all.` : null;
   if (code === -3 || code == null || code === -1) {
     return { color: "grey", title: "No sign records", until: null, freeMins: 0, signs: [],
       reason: "The city has no sign records for this block, so this map can't tell what's posted here." };
@@ -171,7 +188,7 @@ export function evaluateSide(code, tables, types, t) {
   const signs = entry[1].map((i) => tables.messages[i]);
   const rules = entry[0].map((i) => tables.rules[i]);
   if (!rules.length) {
-    return { color: "green", title: "No parking signs", until: null, freeMins: Infinity, signs, cat: "nosigns",
+    return { color: "green", title: "No parking signs", until: null, freeMins: Infinity, signs, cat: "nosigns", caveat: narrow,
       reason: `The city's sign records (collected ${surveyed}) show no parking-restriction signs on this side of the block. Austin doesn't post "free parking" signs; an unsigned curb is open parking.`
         + (signs.length ? " The signs listed below cover only a few spaces." : "") };
   }
@@ -185,7 +202,7 @@ export function evaluateSide(code, tables, types, t) {
   let color = now.color, title = now.title;
   if (color === "green" && freeMins < AMBER_MINUTES) { color = "amber"; title = title.replace("Free now", "Free, ending soon"); }
   return { color, title, reason: now.reason, until, freeMins, signs, cat: now.cat,
-    caveat: "Based on posted signs in the city's sign records. A sign may cover only part of the block." };
+    caveat: "Based on posted signs in the city's sign records. A sign may cover only part of the block." + (narrow ? " " + narrow : "") };
 }
 
 export function evaluateCenterline(p) {

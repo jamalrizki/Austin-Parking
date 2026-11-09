@@ -266,10 +266,20 @@ def build_centerline(excl, covered, pay_areas):
         lines = [simplify(rnd5(line), 1.5) for line in lines_of(g)]
         geom = {"type": "LineString", "coordinates": lines[0]} if len(lines) == 1 else {"type": "MultiLineString", "coordinates": lines}
         feats.append({"type": "Feature", "geometry": geom, "properties": props})
-    sides, stats = build_side_info(kept, pay_areas, kept_props)
+    ctn = {str(int(a["SEGMENT_ID"])): a for a in json.loads((RAW / "ctn.json").read_text()) if a.get("SEGMENT_ID")}
+    sides, stats = build_side_info(kept, pay_areas, kept_props, ctn)
+    from sides import physical
+    for seg in kept:
+        row = ctn.get(seg) or {}
+        w = row.get("PAVEMENT_WIDTH")
+        _, _, has_lane = physical(row)
+        kept_props[seg]["_w"] = int(w) if w else -1
+        kept_props[seg]["_pk"] = 1 if has_lane else 0
     stats["outside_city_limits"] = outside
     for f in feats:
         seg = f["properties"]["seg"]
+        f["properties"]["w"] = kept_props[seg]["_w"]
+        f["properties"]["pk"] = kept_props[seg]["_pk"]
         f["properties"]["L"] = sides[(seg, "L")]
         f["properties"]["R"] = sides[(seg, "R")]
     return feats, dropped, stats
@@ -336,9 +346,12 @@ def pack_streets(feats, survey_years):
     """Compact street format, decoded in public/streets.js.
     {"v":5, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
      "sy":[first, median, last survey year],
-     "f":[[name_i, hundred_block(-1 = none), left, right, part, part...], ...]}
+     "f":[[name_i, hundred_block(-1 = none), left, right, pavement_ft(-1 = unknown), parking_lane(0/1), part, part...], ...]}
     left/right: -1 curb zones cover this side, -2 surveyed with no parking signs,
-                -3 no city sign records, -4 median side of a divided road, >=0 index into e.
+                -3 no city sign records, -4 median side of a divided road,
+                -5/-6/-7 no physical parking space (travel lane / bike lane at curb / under 24 ft wide),
+                -8/-9 no parking signs but room unconfirmed (24-27 ft, no parking lane / no width data),
+                >=0 index into e.
     e[i] = [[rule_i...], [message_i...]];  r[j] = {"t","w","q","tl"?,"note"?}
     Parts are flat int coordinate deltas chained across the file (features sorted spatially)."""
     S = 100000
@@ -346,6 +359,7 @@ def pack_streets(feats, survey_years):
     msgs, msg_i, rules, rule_i, ents, ent_i = [], {}, [], {}, [], {}
     ox, oy = -97.95, 30.08
     CODE = {"Z": -1, "N": -2, "U": -3, "M": -4}
+    NO_ROOM = {"lane": -5, "bike": -6, "narrow": -7, "tight": -8, "nodata": -9}
 
     def intern(lst, idx, key, val):
         i = idx.get(key)
@@ -357,6 +371,8 @@ def pack_streets(feats, survey_years):
     def side_code(v):
         if isinstance(v, str):
             return CODE[v]
+        if isinstance(v, tuple):
+            return NO_ROOM[v[1]]
         r = [intern(rules, rule_i, json.dumps(x, sort_keys=True), {k: x[k] for k in x if x[k] is not None}) for x in v["rules"]]
         m = [intern(msgs, msg_i, x, x) for x in v["msgs"]]
         return intern(ents, ent_i, json.dumps([r, m]), [r, m])
@@ -374,7 +390,7 @@ def pack_streets(feats, survey_years):
         ni = intern(names, name_i, p["st"], p["st"])
         g = f["geometry"]
         parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
-        row = [ni, p.get("blk", -1), side_code(p["L"]), side_code(p["R"])]
+        row = [ni, p.get("blk", -1), side_code(p["L"]), side_code(p["R"]), p.get("w", -1), p.get("pk", 0)]
         for line in parts:
             flat = []
             for x, y in line:
@@ -383,7 +399,7 @@ def pack_streets(feats, survey_years):
                 px, py = ix, iy
             row.append(flat)
         out.append(row)
-    return {"v": 5, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
+    return {"v": 6, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
 
 
 def write(path, obj):
@@ -426,7 +442,7 @@ def main():
     for c in centre:
         for k in ("L", "R"):
             v = c["properties"][k]
-            code = v if isinstance(v, str) else ("S-rules" if v["rules"] else "S-spot-only")
+            code = v if isinstance(v, str) else f"{v[0]}-{v[1]}" if isinstance(v, tuple) else ("S-rules" if v["rules"] else "S-spot-only")
             sc[code] = sc.get(code, 0) + 1
     print(f"centerline kept {len(centre)} dropped {dropped}")
     print(f"street sides {sc}  (Z curb zones, S signs, N surveyed/no parking signs, U no sign records)")

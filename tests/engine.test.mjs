@@ -161,6 +161,8 @@ test("real data: streets decode; sides follow the sign records", { skip: !exists
     const c = evaluateSide(code, tables, types, T(9, 12)).color;
     if (code === -3) assert.equal(c, "grey", "no-records side must be grey");
     if (code === -2) assert.equal(c, "green", "no-parking-signs side is green");
+    if (code === -8 || code === -9) assert.equal(c, "grey", "room-unconfirmed side must be grey");
+    if (code === -2) assert.ok(f.properties.pk || f.properties.w >= 28, `${f.properties.st} green without room evidence`);
     counts[c] = (counts[c] || 0) + 1;
   }
   assert.ok(withRules.length > 3000, `only ${withRules.length} streets with sign rules`);
@@ -197,4 +199,8 @@ test("sign rules: no-parking sign with hours, permit sign, time limit, unknown",
   assert.equal(evaluateSide(5, tables, types, noon).color, "green");
   assert.equal(evaluateSide(-2, tables, types, noon).color, "green");
   assert.equal(evaluateSide(-3, tables, types, noon).color, "grey");
+  for (const code of [-5, -6, -7]) assert.equal(evaluateSide(code, tables, types, noon).color, "red");
+  for (const code of [-8, -9]) assert.equal(evaluateSide(code, tables, types, noon).color, "grey");
+  assert.match(evaluateSide(-2, tables, types, noon, { w: 25 }).caveat, /Narrow/);
+  assert.equal(evaluateSide(-2, tables, types, noon, { w: 25, pk: 1 }).caveat, null);
 });

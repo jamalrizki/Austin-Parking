@@ -56,13 +56,15 @@ map.on("load", async () => {
   for (const [S, dir] of [["L", -1], ["R", 1]]) {
     const code = ["get", S];
     map.addLayer({ id: `side-${S}`, type: "line", source: "streets", minzoom: 11,
-      filter: ["any", ["==", code, -2], [">=", code, 0]],
+      filter: ["any", ["==", code, -2], [">=", code, 0], ["in", code, ["literal", [-5, -6, -7]]]],
       layout: { "line-cap": "butt" },
-      paint: { "line-color": ["match", ["coalesce", ["feature-state", `${S}c`], "green"],
-                 "green", COLORS.green, "amber", COLORS.amber, "red", COLORS.red, COLORS.grey],
+      paint: { "line-color": ["case", ["in", code, ["literal", [-5, -6, -7]]], COLORS.red,
+                 ["match", ["coalesce", ["feature-state", `${S}c`], "green"],
+                   "green", COLORS.green, "amber", COLORS.amber, "red", COLORS.red, COLORS.grey]],
                "line-width": width(2.6), "line-offset": sideOffset(dir),
-               "line-opacity": ["case", ["boolean", ["feature-state", `${S}d`], false], 0.18, 0.9] } });
-    map.addLayer({ id: `side-${S}-none`, type: "line", source: "streets", minzoom: 12, filter: ["==", code, -3],
+               "line-opacity": ["case", ["in", code, ["literal", [-5, -6, -7]]], 0.55,
+                 ["boolean", ["feature-state", `${S}d`], false], 0.18, 0.9] } });
+    map.addLayer({ id: `side-${S}-none`, type: "line", source: "streets", minzoom: 12, filter: ["in", code, ["literal", [-3, -8, -9]]],
       layout: { "line-cap": "butt" },
       paint: { "line-color": "#a3abb8", "line-width": 1.6, "line-offset": sideOffset(dir), "line-opacity": 0.7, "line-dasharray": [1.5, 1.5] } });
   }
@@ -133,7 +135,7 @@ function renderStreets() {
     const st = {};
     for (const S of ["L", "R"]) {
       if (p[S] < 0) continue;
-      const r = evaluateSide(p[S], tables, state.types, state.t);
+      const r = evaluateSide(p[S], tables, state.types, state.t, p);
       st[`${S}c`] = r.color;
       st[`${S}d`] = !meetsWindow(r, state.filter, state.t);
     }
@@ -149,7 +151,7 @@ function openCard(src, id, side) {
   map.setFilter("sel", ["==", ["id"], src === "seg" ? id : -1]);
   map.setFilter("sel-st", ["==", ["id"], src === "streets" ? id : -1]);
   const p = src === "streets" ? { ...f.properties, side: state.compassSide(f.geometry, side) } : f.properties;
-  const r = src === "streets" ? evaluateSide(p[side], state.streets.tables, state.types, state.t) : evaluate(p, state.types, state.t);
+  const r = src === "streets" ? evaluateSide(p[side], state.streets.tables, state.types, state.t, p) : evaluate(p, state.types, state.t);
   const meta = state.data.meta;
   let until = "";
   if (r.color === "green" || r.color === "amber") until = r.until == null ? "Free all week (no change in the next 8 days)" : `Free until ${fmtUntil(state.t, r.until)}`;
@@ -166,6 +168,10 @@ function openCard(src, id, side) {
     if (p.rpp) rows.push(["RPP district", p.rpp]);
     if (p.cmt) rows.push(["City note", p.cmt]);
     rows.push(["Zone ID", p.id]);
+  }
+  if (src === "streets") {
+    if (p.w) rows.push(["Pavement width", `${p.w} ft`]);
+    if (p.pk) rows.push(["Parking lane", "Yes, per city street data"]);
   }
   const sy = state.streets?.tables.surveyYears;
   rows.push(["Source", src === "streets" ? `City of Austin sign inventory${sy ? ` (collected ${sy[0]}–${sy[2]})` : ""}` : srcName]);
