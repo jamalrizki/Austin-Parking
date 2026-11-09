@@ -267,8 +267,9 @@ def build_centerline(excl, covered, pay_areas):
         geom = {"type": "LineString", "coordinates": lines[0]} if len(lines) == 1 else {"type": "MultiLineString", "coordinates": lines}
         feats.append({"type": "Feature", "geometry": geom, "properties": props})
     ctn = {str(int(a["SEGMENT_ID"])): a for a in json.loads((RAW / "ctn.json").read_text()) if a.get("SEGMENT_ID")}
-    sides, stats = build_side_info(kept, pay_areas, kept_props, ctn)
+    sides, stats = build_side_info(kept, pay_areas, kept_props, ctn, osm_side)
     spaces = stats.pop("spaces")
+    evidence = stats.pop("evidence")
     from sides import physical
     for seg in kept:
         row = ctn.get(seg) or {}
@@ -283,6 +284,8 @@ def build_centerline(excl, covered, pay_areas):
         f["properties"]["pk"] = kept_props[seg]["_pk"]
         f["properties"]["spL"] = spaces.get((seg, "L"), -1)
         f["properties"]["spR"] = spaces.get((seg, "R"), -1)
+        f["properties"]["evL"] = evidence.get((seg, "L"), 0)
+        f["properties"]["evR"] = evidence.get((seg, "R"), 0)
         f["properties"]["L"] = sides[(seg, "L")]
         f["properties"]["R"] = sides[(seg, "R")]
     return feats, dropped, stats
@@ -350,13 +353,16 @@ def pack_streets(feats, survey_years):
     {"v":5, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
      "sy":[first, median, last survey year],
      "f":[[name_i, hundred_block(-1 = none), left, right, pavement_ft(-1 = unknown), parking_lane(0/1),
-            spaces_left, spaces_right (car-length curb gaps between driveways, -1 unknown), part...], ...]}
+            spaces_left, spaces_right (car-length curb gaps between driveways, -1 unknown),
+            evidence_left, evidence_right (bit0 OSM parking lane mapped; bits1-2 aerial survey years with
+            cars parked at this curb, 0-3), part...], ...]}
     left/right: -1 curb zones cover this side, -2 surveyed with no parking signs,
                 -3 no city sign records, -4 median side of a divided road,
                 -5/-6/-7 no physical parking space (travel lane / bike lane at curb / under 24 ft wide),
                 -8/-9 no parking signs but room unconfirmed (24-27 ft, no parking lane / no width data),
                 -10 no car-length gap between driveways/lots and corners,
                 -11 collector/arterial/multi-lane road with no sign, zone or listed parking lane showing parking,
+                -12 OpenStreetMap contributors mapped no parking on this side,
                 >=0 index into e.
     e[i] = [[rule_i...], [message_i...]];  r[j] = {"t","w","q","tl"?,"note"?}
     Parts are flat int coordinate deltas chained across the file (features sorted spatially)."""
@@ -365,7 +371,7 @@ def pack_streets(feats, survey_years):
     msgs, msg_i, rules, rule_i, ents, ent_i = [], {}, [], {}, [], {}
     ox, oy = -97.95, 30.08
     CODE = {"Z": -1, "N": -2, "U": -3, "M": -4}
-    NO_ROOM = {"lane": -5, "bike": -6, "narrow": -7, "tight": -8, "nodata": -9, "driveways": -10, "busy": -11}
+    NO_ROOM = {"lane": -5, "bike": -6, "narrow": -7, "tight": -8, "nodata": -9, "driveways": -10, "busy": -11, "osm": -12}
 
     def intern(lst, idx, key, val):
         i = idx.get(key)
@@ -397,7 +403,7 @@ def pack_streets(feats, survey_years):
         g = f["geometry"]
         parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
         row = [ni, p.get("blk", -1), side_code(p["L"]), side_code(p["R"]), p.get("w", -1), p.get("pk", 0),
-               min(p.get("spL", -1), 99), min(p.get("spR", -1), 99)]
+               min(p.get("spL", -1), 99), min(p.get("spR", -1), 99), p.get("evL", 0), p.get("evR", 0)]
         for line in parts:
             flat = []
             for x, y in line:
@@ -406,7 +412,7 @@ def pack_streets(feats, survey_years):
                 px, py = ix, iy
             row.append(flat)
         out.append(row)
-    return {"v": 7, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
+    return {"v": 8, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
 
 
 def write(path, obj):

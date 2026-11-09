@@ -199,7 +199,7 @@ test("sign rules: no-parking sign with hours, permit sign, time limit, unknown",
   assert.equal(evaluateSide(5, tables, types, noon).color, "green");
   assert.equal(evaluateSide(-2, tables, types, noon).color, "green");
   assert.equal(evaluateSide(-3, tables, types, noon).color, "grey");
-  for (const code of [-5, -6, -7, -10]) assert.equal(evaluateSide(code, tables, types, noon).color, "red");
+  for (const code of [-5, -6, -7, -10, -12]) assert.equal(evaluateSide(code, tables, types, noon).color, "red");
   for (const code of [-8, -9, -11]) assert.equal(evaluateSide(code, tables, types, noon).color, "grey");
   assert.match(evaluateSide(-2, tables, types, noon, { w: 25 }).caveat, /Narrow/);
   assert.equal(evaluateSide(-2, tables, types, noon, { w: 25, pk: 1 }).caveat, null);

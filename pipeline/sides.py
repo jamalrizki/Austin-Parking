@@ -165,7 +165,7 @@ def physical(ctn_row):
     return None, None, False
 
 
-def build_side_info(kept, pay_areas, props=None, ctn=None):
+def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
     """kept: {segment_id(str): raw geometry} for streets shown on the map; props: centreline attributes.
     Returns (side_of_segment dict {(seg, 'L'|'R'): code_or_entry}, stats)."""
     lines = {s: lines_of(g) for s, g in kept.items()}
@@ -285,6 +285,19 @@ def build_side_info(kept, pay_areas, props=None, ctn=None):
     widths = {seg: ((ctn or {}).get(seg) or {}).get("PAVEMENT_WIDTH") for seg in kept}
     spaces, n_cuts = curb_spaces(lines, widths, RAW / "curb_cuts.jsonl")
     stats["curb_cut_polygons"] = n_cuts
+    # Presence/absence evidence beyond city records.
+    osm = osm_evidence(lines, osm_side_fn) if osm_side_fn else {}
+    cars_path = RAW / "curb_cars.json"
+    if any((RAW.parent / "cars" / "out").glob("cars_*.geojson")):
+        sys.path.insert(0, str(RAW.parent / "cars"))
+        import assign  # noqa: E402  (pipeline/cars/assign.py)
+        assign.main(lines, widths)
+    cars = {}
+    if cars_path.exists():
+        for k, v in json.loads(cars_path.read_text()).items():
+            seg, side = k.split("|")
+            cars[(seg, side)] = sum(1 for n in v.values() if n > 0)  # number of survey years with cars at this curb
+    evidence = {}
     out = {}
     for seg in kept:
         for side in ("L", "R"):
@@ -299,17 +312,25 @@ def build_side_info(kept, pay_areas, props=None, ctn=None):
             elif room.get(seg) is False:
                 out[(seg, side)] = ("X", why[seg])
                 stats["no_room_sides"] = stats.get("no_room_sides", 0) + 1
+            elif osm.get((seg, side)) == "no":
+                out[(seg, side)] = ("X", "osm")
             elif seg not in surveyed:
                 out[(seg, side)] = "U"
-            elif not fits.get(seg):
+            elif not (fits.get(seg) or osm.get((seg, side)) == "yes" or cars.get((seg, side), 0) >= 2):
                 out[(seg, side)] = ("W", fit_why[seg])
             elif (seg, side) in entries:
                 out[(seg, side)] = entries[(seg, side)]
             else:
                 out[(seg, side)] = "N"
+            ev = (1 if osm.get((seg, side)) == "yes" else 0) | (min(cars.get((seg, side), 0), 3) << 1)
+            if ev:
+                evidence[(seg, side)] = ev
     years = sorted(datetime.datetime.fromtimestamp(t / 1000, datetime.timezone.utc).year for t in survey_dates)
     stats["survey_years"] = [years[0], years[len(years) // 2], years[-1]] if years else None
     stats["spaces"] = spaces
+    stats["evidence"] = evidence
+    stats["osm_sides"] = len(osm)
+    stats["car_sides"] = len(cars)
     return out, stats
 
 
@@ -399,3 +420,54 @@ def curb_spaces(lines, widths, path):
                 spaces += int((hi - cur) // CAR_M)
             out[(seg, side)] = spaces
     return out, n
+
+
+# ---------- OpenStreetMap per-side parking tags (community data) ----------
+def osm_evidence(lines, osm_side_fn):
+    """{(seg, side): "no" | "yes"} from OSM parking:* tags, matched to our segments.
+    A way's left/right is relative to its own direction, so it is flipped when the way runs
+    opposite to our centreline. "yes" = a parking lane/street-side parking is mapped (any fee/permit
+    status); "no" = no parking/no stopping."""
+    path = RAW / "osm.geojson"
+    if not path.exists():
+        return {}
+    geo = {s: _pieces(ls)[0] for s, ls in lines.items()}
+    grid = Grid(cell=60)
+    for s, ls in lines.items():
+        grid.add(s, ls)
+    votes = {}
+    for f in json.loads(path.read_text())["features"]:
+        tags, pts = f["properties"], f["geometry"]["coordinates"]
+        if tags.get("highway") in ("motorway", "motorway_link", "trunk_link", "service", "footway", "cycleway", "path"):
+            continue
+        sides = {sd: osm_side_fn(tags, sd) for sd in ("left", "right")}
+        if not any(sides.values()):
+            continue
+        for a, b in zip(pts, pts[1:]):
+            mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+            ax, ay = _xy(a)
+            bx, by = _xy(b)
+            best = None
+            for s in grid.near(mid):
+                if not geo[s]:
+                    continue
+                along, d, _, clamped = _project(*_xy(mid), geo[s])
+                if d < 8 and not clamped and (best is None or d < best[0]):
+                    best = (d, s)
+            if not best:
+                continue
+            s = best[1]
+            # direction of our segment piece nearest the midpoint
+            mx, my = _xy(mid)
+            px, py, pdx, pdy, _, _ = min(geo[s], key=lambda q: abs((mx - q[0]) * q[3] - (my - q[1]) * q[2]) / q[4])
+            same = (bx - ax) * pdx + (by - ay) * pdy >= 0
+            for sd, r in sides.items():
+                if not r or r["v"] == "unknown":
+                    continue
+                our = ("L" if sd == "left" else "R") if same else ("R" if sd == "left" else "L")
+                v = "no" if r["v"] == "no" else "yes"
+                votes.setdefault((s, our), []).append(v)
+    out = {}
+    for k, vs in votes.items():
+        out[k] = "no" if vs.count("no") > vs.count("yes") else "yes"
+    return out

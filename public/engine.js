@@ -166,6 +166,7 @@ const NO_ROOM = {
   [-6]: "The city's transportation network shows a bike lane at the curb here, so there's no space to park.",
   [-7]: "The city's transportation network lists this street as under 24 ft wide: too narrow to park without blocking traffic.",
   [-10]: "Driveways and parking-lot entrances (city aerial survey) plus the 20 ft corner clearance leave no gap long enough for a car on this side.",
+  [-12]: "OpenStreetMap contributors have mapped no parking on this side of the street (community data, not city records).",
 };
 
 export function evaluateSide(code, tables, types, t, street = {}) {
@@ -181,7 +182,7 @@ export function evaluateSide(code, tables, types, t, street = {}) {
         : "No parking signs on record, but the city has no street-width or lane data for this block (common on divided roads), so this map can't confirm there's room to park.") };
   }
   if (NO_ROOM[code]) {
-    return { color: "red", title: "No parking space", until: null, freeMins: 0, signs: [], reason: NO_ROOM[code] + (street.w && code !== -10 ? ` (pavement ${street.w} ft)` : "") };
+    return { color: "red", title: "No parking space", until: null, freeMins: 0, signs: [], reason: NO_ROOM[code] + (street.w && code !== -10 && code !== -12 ? ` (pavement ${street.w} ft)` : "") };
   }
   const narrow = street.w && street.w < 28 && !street.pk
     ? `Narrow street (pavement ${street.w} ft): parking may only fit on one side, or not at all.` : null;
