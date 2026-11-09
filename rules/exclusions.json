@@ -8,12 +8,15 @@
     "11": "A73 Alley",
     "12": "A74 Driveway",
     "13": "ROW Jurisdiction Border Segment",
-    "15": "A60 Private Road",
     "16": "A70 Routing Driveway/Service Road",
     "17": "A72 Platted ROW/Unbuilt",
     "53": "A25 Not used - Old SH",
     "57": "A41 Not used - Old Collector"
   },
+  "private_road_class": ["15"],
+  "major_road_class": ["4"],
+  "busy_road_class": ["5"],
+  "_road_class_notes": "15 Private (e.g. The Domain) is shown grey, not hidden. 4 Major arterial is grey (parking often prohibited). 5 Minor arterial is 'free unless signed' with a caveat.",
   "built_status_keep": [1, 2],
   "name_patterns": ["\\bSVRD\\b", "\\bRAMP\\b", "\\bTRN\\b", "\\bIH 35\\b", "\\bUPPER DECK\\b", "\\bUD\\b"],
   "osm_highway_exclude": ["motorway", "motorway_link", "trunk", "trunk_link", "service", "footway", "cycleway", "path", "pedestrian", "track", "steps", "construction", "proposed"]

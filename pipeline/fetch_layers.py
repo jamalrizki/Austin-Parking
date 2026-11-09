@@ -20,6 +20,9 @@ ARCGIS_LAYERS = {
     "zones": f"{ARCGIS}/Parking_Inventory_FME_UPDATE_view/FeatureServer/0",
     # Pay-to-park area polygons with per-day hours. District fallback / context.
     "pay_areas": f"{ARCGIS}/COA_Pay_To_Park_Areas/FeatureServer/9",
+    # Properties eligible for residential permits: flags blocks that may be permit-only even
+    # when the curb inventory has no RPP zone (about 21% of eligible blocks, see DATA_NOTES).
+    "rpp_properties": f"{ARCGIS}/RPP_Properties_Edit_View/FeatureServer/0",
     # RPP district polygons (context only).
     "rpp_districts": f"{ARCGIS}/Residential_Parking_Permits/FeatureServer/1",
 }

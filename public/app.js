@@ -48,12 +48,17 @@ map.on("load", async () => {
     paint: { "line-color": "#60a5fa", "line-opacity": 0.25, "line-width": 1, "line-dasharray": [2, 2] } });
 
   map.addSource("streets", { type: "geojson", data: { type: "FeatureCollection", features: [] }, tolerance: 0.5 });
-  map.addLayer({ id: "centre", type: "line", source: "streets", minzoom: 12,
+  // Free-unless-signed streets: solid, lighter green than city-confirmed curbs.
+  map.addLayer({ id: "free-st", type: "line", source: "streets", minzoom: 11, filter: ["in", ["get", "ss"], ["literal", [0, 6]]],
+    layout: { "line-cap": "round" },
+    paint: { "line-color": COLORS.green, "line-width": width(2.2), "line-opacity": 0.5 } });
+  // Everything else on the street base: dashed grey (thin where city curbs are drawn beside it).
+  map.addLayer({ id: "centre", type: "line", source: "streets", minzoom: 12, filter: ["!", ["in", ["get", "ss"], ["literal", [0, 6]]]],
     layout: { "line-cap": "butt" },
     paint: { "line-color": "#a3abb8", "line-width": ["case", ["has", "cov"], 1, 2],
              "line-opacity": ["case", ["has", "cov"], 0.3, 0.75], "line-dasharray": [1.5, 1.5] } });
   map.addLayer({ id: "sel-st", type: "line", source: "streets", filter: ["==", ["id"], -1],
-    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "centre");
+    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "free-st");
 
   map.addSource("seg", { type: "geojson", data: fc });
   map.addLayer({ id: "osm", type: "line", source: "seg", filter: ["==", ["get", "k"], "o"],
@@ -66,7 +71,7 @@ map.on("load", async () => {
   map.addLayer({ id: "sel", type: "line", source: "seg", filter: ["==", ["id"], -1],
     paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "osm");
 
-  for (const id of ["zones", "osm", "centre"]) {
+  for (const id of ["zones", "osm", "centre", "free-st"]) {
     map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
     map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
   }
@@ -89,13 +94,13 @@ async function loadStreets() {
 function onMapClick(e) {
   const pad = 10;
   const box = [[e.point.x - pad, e.point.y - pad], [e.point.x + pad, e.point.y + pad]];
-  const hits = map.queryRenderedFeatures(box, { layers: ["zones", "osm", "centre"] });
+  const hits = map.queryRenderedFeatures(box, { layers: ["zones", "osm", "centre", "free-st"] });
   if (!hits.length) { closeCard(); return; }
   // Prefer city zones, then OSM, then centreline.
-  const rank = { zones: 0, osm: 1, centre: 2 };
+  const rank = { zones: 0, osm: 1, "free-st": 2, centre: 3 };
   hits.sort((a, b) => rank[a.layer.id] - rank[b.layer.id]);
   const h = hits[0];
-  openCard(h.layer.id === "centre" ? "streets" : "seg", h.id);
+  openCard(h.layer.id === "centre" || h.layer.id === "free-st" ? "streets" : "seg", h.id);
 }
 
 // ---------- evaluation + render ----------
