@@ -10,6 +10,7 @@ Each tile image is deleted after detection to keep disk use small.
 Surveys run in order: city2023 (fastest, newest), sm2020, sm2019.
 """
 import concurrent.futures as cf
+import gzip
 import json
 import math
 import pathlib
@@ -63,7 +64,9 @@ def done_tiles(src):
 
 
 def merge(src):
-    feats, seen = [], set()
+    """Write out/cars_<src>.json.gz: {"source", "c": [[lon, lat, conf], ...]}, confidence >= 0.5 only
+    (what assign.py uses), ~2.6 MB per survey so it can live in the repo for the weekly CI rebuild."""
+    pts, seen = [], set()
     p = PROGRESS / f"{src}.jsonl"
     if not p.exists():
         return 0
@@ -72,16 +75,18 @@ def merge(src):
             rec = json.loads(line)
         except ValueError:
             continue
-        for lon, lat, conf, length, cls in rec["c"]:
+        for lon, lat, conf, _length, _cls in rec["c"]:
             key = (round(lon, 5), round(lat, 5))
-            if key in seen:
+            if conf < 0.5 or key in seen:
                 continue
             seen.add(key)
-            feats.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                          "properties": {"conf": conf, "len_m": length, "cls": cls}})
+            pts.append([round(lon, 6), round(lat, 6), conf])
     D.OUT.mkdir(parents=True, exist_ok=True)
-    (D.OUT / f"cars_{src}.geojson").write_text(json.dumps({"type": "FeatureCollection", "source": src, "features": feats}))
-    return len(feats)
+    body = json.dumps({"source": src, "c": pts}, separators=(",", ":")).encode()
+    (D.OUT / f"cars_{src}.json.gz").write_bytes(gzip.compress(body, 9))
+    old = D.OUT / f"cars_{src}.geojson"
+    old.unlink(missing_ok=True)  # superseded by the compact file
+    return len(pts)
 
 
 def status(tiles):

@@ -265,7 +265,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         stats["signs_used"] += 1
 
     medians = median_sides(kept, props, lines) if props else set()
-    room, why, fits, fit_why = {}, {}, {}, {}
+    room, why, fits, fit_why, car_ok = {}, {}, {}, {}, {}
     for seg in kept:
         row = (ctn or {}).get(seg)
         r, reason, has_lane = physical(row)
@@ -281,6 +281,10 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         local = rc in ("6", "9") and lanes <= 2
         fits[seg] = has_lane or (local and width >= TIGHT_FT)
         fit_why[seg] = "busy" if not local else ("tight" if width else "nodata")
+        # Parked cars seen from the air count as evidence on local streets and collectors only. On
+        # arterials (class 4/5 and others) cars beside the road are usually in an adjacent lot or
+        # stopped in traffic: Cameron Rd 7800 block passed the curb test from lot cars in 2 surveys.
+        car_ok[seg] = rc in ("6", "8", "9")
     stats["median_sides"] = len(medians)
     widths = {seg: ((ctn or {}).get(seg) or {}).get("PAVEMENT_WIDTH") for seg in kept}
     spaces, n_cuts = curb_spaces(lines, widths, RAW / "curb_cuts.jsonl")
@@ -288,7 +292,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
     # Presence/absence evidence beyond city records.
     osm = osm_evidence(lines, osm_side_fn) if osm_side_fn else {}
     cars_path = RAW / "curb_cars.json"
-    if any((RAW.parent / "cars" / "out").glob("cars_*.geojson")):
+    if any((RAW.parent / "cars" / "out").glob("cars_*.*")):
         sys.path.insert(0, str(RAW.parent / "cars"))
         import assign  # noqa: E402  (pipeline/cars/assign.py)
         assign.main(lines, widths)
@@ -316,7 +320,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
                 out[(seg, side)] = ("X", "osm")
             elif seg not in surveyed:
                 out[(seg, side)] = "U"
-            elif not (fits.get(seg) or osm.get((seg, side)) == "yes" or cars.get((seg, side), 0) >= 2):
+            elif not (fits.get(seg) or osm.get((seg, side)) == "yes" or (car_ok[seg] and cars.get((seg, side), 0) >= 2)):
                 out[(seg, side)] = ("W", fit_why[seg])
             elif (seg, side) in entries:
                 out[(seg, side)] = entries[(seg, side)]

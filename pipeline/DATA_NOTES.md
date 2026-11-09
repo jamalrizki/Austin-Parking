@@ -253,3 +253,18 @@ Austin publishes no geolocated parking-citation data on its open-data portal (ch
   of Jamal's no-parking streets.
 - Citywide detection runs locally and resumably (`pipeline/cars/run_city.py`), ~3 tiles/s for the
   2023 survey with 4 parallel downloads.
+
+## 2026-11-09: citywide aerial detections (2023 + 2020)
+
+- city2023: 26,852 street tiles, 388,014 vehicles; sm2020: 26,844 tiles (8 failed with HTTP 504,
+  retried on the next run), 256,502 vehicles. sm2019 still running.
+- Stored as `pipeline/cars/out/cars_<survey>.json.gz` (`{"source","c":[[lon,lat,conf]]}`, conf >= 0.5,
+  ~2.6 MB each) so the weekly CI rebuild keeps the evidence. The raw 63 MB GeoJSON is no longer kept.
+- 105k of 552k detections are curb-parked. With 2 surveys, 213 street sides moved from grey to green
+  (parked cars at that curb in both years).
+- Spot check against 2023 imagery: residential/collector samples (Dove Springs Dr, Brownie Dr,
+  Forest Hill Dr, Dorchester Dr, Crestmont Dr) show cars parked along the curb. Cameron Rd 7800
+  (5-lane arterial) was a false positive: cars in the adjacent lot. Arterials (road_class 4/5 and
+  anything not 6/8/9) are now excluded from car evidence; they need a listed parking lane or OSM.
+- None of the walked no-parking streets (La Calma, La Posada, Camino La Costa, Cameron Rd near
+  Anderson, Norwood Park Blvd) gained green.

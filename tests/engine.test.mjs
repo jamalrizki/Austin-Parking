@@ -162,7 +162,11 @@ test("real data: streets decode; sides follow the sign records", { skip: !exists
     if (code === -3) assert.equal(c, "grey", "no-records side must be grey");
     if (code === -2) assert.equal(c, "green", "no-parking-signs side is green");
     if (code === -8 || code === -9 || code === -11) assert.equal(c, "grey", "unconfirmed side must be grey");
-    if (code === -2) assert.ok(f.properties.pk || f.properties.w >= 28, `${f.properties.st} green without room evidence`);
+    // green needs positive evidence: listed parking lane, wide local street, OSM parking lane, or
+    // parked cars at this curb in >= 2 aerial surveys (evidence bits: 0 OSM, 1-2 survey count)
+    const ev = f.properties["ev" + S] || 0;
+    if (code === -2) assert.ok(f.properties.pk || f.properties.w >= 28 || (ev & 1) || ((ev >> 1) & 3) >= 2,
+      `${f.properties.st} green without room evidence`);
     counts[c] = (counts[c] || 0) + 1;
   }
   assert.ok(withRules.length > 3000, `only ${withRules.length} streets with sign rules`);

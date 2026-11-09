@@ -15,6 +15,7 @@ several metres off. For each detected vehicle:
      parked rows from traffic in a curb lane (Camino La Costa, Cameron Rd, frontage roads).
 Output: pipeline/raw/curb_cars.json  {"<seg>|<L|R>": {"<source>": hugging_count, ...}, ...}
 """
+import gzip
 import json
 import math
 import pathlib
@@ -86,9 +87,12 @@ def _ray_hits(grid, x, y, ux, uy):
 
 def main(kept_lines, widths=None):
     det = {}
-    for p in sorted(OUT_DIR.glob("cars_*.geojson")):
+    for p in sorted(OUT_DIR.glob("cars_*.json.gz")):  # citywide surveys (run_city.py --merge)
+        d = json.loads(gzip.decompress(p.read_bytes()))
+        det[d["source"]] = [c[:2] for c in d["c"] if c[2] >= 0.5]
+    for p in sorted(OUT_DIR.glob("cars_*.geojson")):  # bbox test runs (detect.py); citywide wins
         fc = json.loads(p.read_text())
-        det[fc["source"]] = [f["geometry"]["coordinates"] for f in fc["features"] if f["properties"]["conf"] >= 0.5]
+        det.setdefault(fc["source"], [f["geometry"]["coordinates"] for f in fc["features"] if f["properties"]["conf"] >= 0.5])
     if not det or not (RAW / "roads.jsonl").exists():
         return {}
     pts = [pt for v in det.values() for pt in v]
