@@ -31,7 +31,7 @@ def get(url, data=None, tries=4):
     for i in range(tries):
         try:
             req = urllib.request.Request(url, data=data, headers={"User-Agent": UA, "Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=120) as r:
+            with urllib.request.urlopen(req, timeout=360) as r:
                 return json.load(r)
         except Exception as e:  # network hiccups: back off and retry
             if i == tries - 1:
@@ -41,7 +41,7 @@ def get(url, data=None, tries=4):
 
 
 def area_polygon():
-    gj = json.loads((ROOT / "rules" / "areas" / "east-austin.geojson").read_text())
+    gj = json.loads((ROOT / "rules" / "areas" / "austin.geojson").read_text())
     return gj["features"][0]["geometry"]["coordinates"][0]  # [[lon, lat], ...]
 
 
@@ -86,7 +86,7 @@ def fetch_centerline(poly):
 
 def fetch_osm(poly):
     polystr = " ".join(f"{y} {x}" for x, y in poly)
-    query = f'[out:json][timeout:120];way["highway"](poly:"{polystr}")[~"^parking:"~"."];out tags geom;'
+    query = f'[out:json][timeout:300];way["highway"](poly:"{polystr}")[~"^parking:"~"."];out tags geom;'
     data = get(OVERPASS, data=urllib.parse.urlencode({"data": query}).encode())
     feats = []
     for el in data.get("elements", []):

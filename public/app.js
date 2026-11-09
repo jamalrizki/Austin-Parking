@@ -2,7 +2,7 @@ import { evaluate, meetsWindow, nowIndex, toIndex, fromIndex, fmtUntil } from ".
 
 const REPO = "jamalrizki/Austin-Parking";
 const PARK_ATX = "https://parkatx.com";
-const START = { center: [-97.7225, 30.2645], zoom: 14.6 };
+const START = { center: [-97.7330, 30.2660], zoom: 14 };
 const AUSTIN_BBOX = "-97.94,30.10,-97.56,30.52";
 const COLORS = { green: "#22c55e", amber: "#f5a524", red: "#ef4444", grey: "#6b7280" };
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -10,7 +10,7 @@ const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-const state = { data: null, types: {}, t: nowIndex(), live: true, filter: "any", selected: null };
+const state = { data: null, streets: null, types: {}, t: nowIndex(), live: true, filter: "any", selected: null };
 const saved = (() => { try { return localStorage.getItem("minWindow"); } catch { return null; } })();
 if (saved) state.filter = saved;
 
@@ -25,10 +25,15 @@ const map = new maplibregl.Map({
 map.touchZoomRotate.disableRotation();
 window.parkingMap = map; // handy for debugging in devtools
 
-const dataReady = fetch("data/segments.geojson").then((r) => {
-  if (!r.ok) throw new Error(`data ${r.status}`);
-  return r.json();
-});
+// Critical path: curb zones (small). Citywide grey streets load after first paint.
+const getJSON = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(`${u} ${r.status}`); return r.json(); });
+const dataReady = getJSON("data/segments.json");
+
+const width = (base) => ["interpolate", ["linear"], ["zoom"], 12, base * 0.5, 15, base, 18, base * 2.4];
+// Colours live in feature-state so changing the time only updates states, never re-uploads geometry.
+const C = ["feature-state", "c"];
+const color = ["match", ["coalesce", C, "grey"], "green", COLORS.green, "amber", COLORS.amber, "red", COLORS.red, COLORS.grey];
+const opacity = ["case", ["boolean", ["feature-state", "dim"], false], 0.18, 1];
 
 map.on("load", async () => {
   let fc;
@@ -38,19 +43,19 @@ map.on("load", async () => {
   fc.features.forEach((f, i) => { f.id = i; });
   setAsOf(fc.meta.built_from_fetch);
 
-  map.addSource("areas", { type: "geojson", data: "data/areas.geojson" });
+  map.addSource("areas", { type: "geojson", data: "data/areas.json" });
   map.addLayer({ id: "areas-line", type: "line", source: "areas",
     paint: { "line-color": "#60a5fa", "line-opacity": 0.25, "line-width": 1, "line-dasharray": [2, 2] } });
 
-  map.addSource("seg", { type: "geojson", data: fc, generateId: false });
-  const width = (base) => ["interpolate", ["linear"], ["zoom"], 12, base * 0.5, 15, base, 18, base * 2.4];
-  const color = ["match", ["get", "_c"], "green", COLORS.green, "amber", COLORS.amber, "red", COLORS.red, COLORS.grey];
-  const opacity = ["case", ["==", ["get", "_dim"], true], 0.18, 1];
-
-  map.addLayer({ id: "centre", type: "line", source: "seg", filter: ["==", ["get", "k"], "c"],
+  map.addSource("streets", { type: "geojson", data: { type: "FeatureCollection", features: [] }, tolerance: 0.5 });
+  map.addLayer({ id: "centre", type: "line", source: "streets", minzoom: 12,
     layout: { "line-cap": "butt" },
-    paint: { "line-color": "#a3abb8", "line-width": ["case", ["get", "cov"], 1, 2],
-             "line-opacity": ["case", ["get", "cov"], 0.3, 0.75], "line-dasharray": [1.5, 1.5] } });
+    paint: { "line-color": "#a3abb8", "line-width": ["case", ["has", "cov"], 1, 2],
+             "line-opacity": ["case", ["has", "cov"], 0.3, 0.75], "line-dasharray": [1.5, 1.5] } });
+  map.addLayer({ id: "sel-st", type: "line", source: "streets", filter: ["==", ["id"], -1],
+    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "centre");
+
+  map.addSource("seg", { type: "geojson", data: fc });
   map.addLayer({ id: "osm", type: "line", source: "seg", filter: ["==", ["get", "k"], "o"],
     layout: { "line-cap": "round" },
     paint: { "line-color": color, "line-width": width(3), "line-opacity": opacity,
@@ -59,7 +64,7 @@ map.on("load", async () => {
     layout: { "line-cap": "round" },
     paint: { "line-color": color, "line-width": width(3.5), "line-opacity": opacity } });
   map.addLayer({ id: "sel", type: "line", source: "seg", filter: ["==", ["id"], -1],
-    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "centre");
+    paint: { "line-color": "#ffffff", "line-width": width(7), "line-opacity": 0.35 } }, "osm");
 
   for (const id of ["zones", "osm", "centre"]) {
     map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
@@ -67,38 +72,51 @@ map.on("load", async () => {
   }
   map.on("click", onMapClick);
   render();
+  loadStreets();
 });
+
+async function loadStreets() {
+  try {
+    const [{ decodeStreets }, packed] = await Promise.all([import("./streets.js"), getJSON("data/streets.json")]);
+    state.streets = decodeStreets(packed);
+    map.getSource("streets").setData(state.streets);
+    streetIndex = null; // rebuild search index with all streets
+  } catch (e) {
+    toast("Couldn't load the street base layer; coloured curbs still work.");
+  }
+}
 
 function onMapClick(e) {
   const pad = 10;
   const box = [[e.point.x - pad, e.point.y - pad], [e.point.x + pad, e.point.y + pad]];
   const hits = map.queryRenderedFeatures(box, { layers: ["zones", "osm", "centre"] });
   if (!hits.length) { closeCard(); return; }
-  // Prefer city zones, then OSM, then centreline; among equals, nearest to the tap.
+  // Prefer city zones, then OSM, then centreline.
   const rank = { zones: 0, osm: 1, centre: 2 };
   hits.sort((a, b) => rank[a.layer.id] - rank[b.layer.id]);
-  openCard(hits[0].id);
+  const h = hits[0];
+  openCard(h.layer.id === "centre" ? "streets" : "seg", h.id);
 }
 
 // ---------- evaluation + render ----------
 function render() {
   if (!state.data) return;
   if (state.live) state.t = nowIndex();
-  for (const f of state.data.features) {
-    const r = evaluate(f.properties, state.types, state.t);
-    f.properties._c = r.color;
-    f.properties._dim = !meetsWindow(r, state.filter, state.t);
+  const feats = state.data.features;
+  for (let i = 0; i < feats.length; i++) {
+    const r = evaluate(feats[i].properties, state.types, state.t);
+    map.setFeatureState({ source: "seg", id: i }, { c: r.color, dim: !meetsWindow(r, state.filter, state.t) });
   }
-  map.getSource("seg").setData(state.data);
-  if (state.selected != null) openCard(state.selected);
+  if (state.selected) openCard(state.selected.src, state.selected.id);
 }
 
 // ---------- card ----------
-function openCard(id) {
-  const f = state.data.features[id];
+function openCard(src, id) {
+  const f = src === "streets" ? state.streets?.features[id] : state.data.features[id];
   if (!f) return;
-  state.selected = id;
-  map.setFilter("sel", ["==", ["id"], id]);
+  state.selected = { src, id };
+  map.setFilter("sel", ["==", ["id"], src === "seg" ? id : -1]);
+  map.setFilter("sel-st", ["==", ["id"], src === "streets" ? id : -1]);
   const p = f.properties;
   const r = evaluate(p, state.types, state.t);
   const meta = state.data.meta;
@@ -118,14 +136,13 @@ function openCard(id) {
     if (p.cmt) rows.push(["City note", p.cmt]);
     rows.push(["Zone ID", p.id]);
   }
-  if (p.k === "c" && p.seg) rows.push(["Segment ID", p.seg]);
   if (p.k === "o") rows.push(["OSM way", `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(p.osm)}" target="_blank" rel="noopener">${esc(p.osm)}</a>`]);
   rows.push(["Source", srcName]);
   rows.push(["Data fetched", localDate(meta.built_from_fetch)]);
 
   const issue = new URL(`https://github.com/${REPO}/issues/new`);
   issue.searchParams.set("title", `Data problem: ${p.st || "street"} ${p.blk || ""} ${p.side || ""}`.trim());
-  issue.searchParams.set("body", `Location: ${p.st} ${where}\nMap says: ${r.title} — ${r.reason}\nFeature: ${p.k}:${p.id || p.seg || p.osm}\nWhen viewed: ${describeTime()}\n\nWhat the signs actually say:\n`);
+  issue.searchParams.set("body", `Location: ${p.st} ${where}\nMap says: ${r.title} — ${r.reason}\nFeature: ${p.k}:${p.id || p.osm || "street"}\nWhen viewed: ${describeTime()}\n\nWhat the signs actually say:\n`);
 
   $("cardBody").innerHTML = `
     <h2>${esc(p.st || "Street")}</h2>
@@ -145,7 +162,7 @@ function openCard(id) {
 function closeCard() {
   state.selected = null;
   $("card").hidden = true;
-  if (map.getLayer("sel")) map.setFilter("sel", ["==", ["id"], -1]);
+  if (map.getLayer("sel")) { map.setFilter("sel", ["==", ["id"], -1]); map.setFilter("sel-st", ["==", ["id"], -1]); }
 }
 $("close").addEventListener("click", closeCard);
 
@@ -234,16 +251,32 @@ const results = $("results");
 let searchTimer = null;
 let streetIndex = null;
 
+const PLACES = [
+  { label: "East Austin", center: [-97.7225, 30.2645], zoom: 15 },
+  { label: "Downtown", center: [-97.7430, 30.2685], zoom: 15.5 },
+  { label: "Rainey Street", center: [-97.7385, 30.2585], zoom: 16.3 },
+  { label: "South Congress", center: [-97.7495, 30.2490], zoom: 15.5 },
+  { label: "Mueller", center: [-97.7055, 30.2985], zoom: 15.3 },
+  { label: "Zilker", center: [-97.7710, 30.2665], zoom: 15 },
+  { label: "West Campus", center: [-97.7465, 30.2895], zoom: 15.5 },
+  { label: "Hyde Park", center: [-97.7290, 30.3050], zoom: 15 },
+];
+
 function buildStreetIndex() {
   const m = new Map();
-  for (const f of state.data.features) {
+  const add = (f) => {
     const name = f.properties.st;
-    if (!name || f.properties.k === "o") continue;
-    const coords = f.geometry.type === "LineString" ? f.geometry.coordinates : f.geometry.coordinates.flat();
-    const e = m.get(name) || { name, minx: 180, miny: 90, maxx: -180, maxy: -90 };
-    for (const [x, y] of coords) { e.minx = Math.min(e.minx, x); e.miny = Math.min(e.miny, y); e.maxx = Math.max(e.maxx, x); e.maxy = Math.max(e.maxy, y); }
-    m.set(name, e);
-  }
+    if (!name || f.properties.k === "o") return;
+    const g = f.geometry;
+    const lines = g.type === "LineString" ? [g.coordinates] : g.coordinates;
+    let e = m.get(name);
+    if (!e) { e = { name, lc: name.toLowerCase(), minx: 180, miny: 90, maxx: -180, maxy: -90 }; m.set(name, e); }
+    for (const line of lines) for (const [x, y] of line) {
+      if (x < e.minx) e.minx = x; if (y < e.miny) e.miny = y; if (x > e.maxx) e.maxx = x; if (y > e.maxy) e.maxy = y;
+    }
+  };
+  state.data.features.forEach(add);
+  if (state.streets) state.streets.features.forEach(add);
   return [...m.values()];
 }
 
@@ -255,7 +288,7 @@ function showResults(items) {
     results.hidden = true;
     $("q").blur();
     if (it.bbox) map.fitBounds(it.bbox, { padding: 60, maxZoom: 17 });
-    else map.flyTo({ center: it.center, zoom: 17 });
+    else map.flyTo({ center: it.center, zoom: it.zoom || 17 });
   }));
 }
 
@@ -263,10 +296,14 @@ async function search(q) {
   if (!state.data) return;
   streetIndex ||= buildStreetIndex();
   const needle = q.toLowerCase().replace(/\b(street|st|avenue|ave|road|rd|drive|dr|boulevard|blvd)\b\.?/g, "").trim();
+  const ql = q.toLowerCase();
+  const places = PLACES.filter((p) => p.label.toLowerCase().includes(ql)).map((p) => ({ ...p, sub: "Neighborhood" }));
   const local = needle.length < 2 ? [] : streetIndex
-    .filter((s) => s.name.toLowerCase().includes(needle))
-    .slice(0, 5)
-    .map((s) => ({ label: s.name, sub: "Street on the map", bbox: [[s.minx, s.miny], [s.maxx, s.maxy]] }));
+    .filter((s) => s.lc.includes(needle))
+    .sort((a, b) => (b.lc.startsWith(needle) - a.lc.startsWith(needle)) || a.name.length - b.name.length)
+    .slice(0, 6)
+    .map((s) => ({ label: s.name, sub: "Street", bbox: [[s.minx, s.miny], [s.maxx, s.maxy]] }));
+  local.unshift(...places);
   showResults(local);
   if (q.length < 4 || !/\d|,/.test(q)) return; // only geocode things that look like addresses
   try {
@@ -280,10 +317,13 @@ async function search(q) {
   } catch { /* offline or rate-limited: local results still shown */ }
 }
 
+const showPlaces = () => showResults(PLACES.map((p) => ({ ...p, sub: "Neighborhood" })));
+$("q").addEventListener("focus", (e) => { if (!e.target.value.trim()) showPlaces(); });
+$("q").addEventListener("blur", () => setTimeout(() => { results.hidden = true; }, 200));
 $("q").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
-  if (!q) { results.hidden = true; return; }
+  if (!q) { showPlaces(); return; }
   searchTimer = setTimeout(() => search(q), 350);
 });
 $("search").addEventListener("submit", (e) => {

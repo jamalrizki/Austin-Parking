@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Austin","note":"Coverage area for fetching streets and OSM tags: a box around the City of Austin. The city centerline dataset itself limits what's included."},"geometry":{"type":"Polygon","coordinates":[[[-97.95,30.08],[-97.54,30.08],[-97.54,30.53],[-97.95,30.53],[-97.95,30.08]]]}}]}

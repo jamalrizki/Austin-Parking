@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
+import { decodeStreets } from "../public/streets.js";
 import { evaluate, toIndex, isMeterHoliday, meetsWindow, fmtUntil, nowIndex } from "../public/engine.js";
 
 const types = JSON.parse(readFileSync(new URL("../rules/zone_types.json", import.meta.url)));
@@ -108,7 +109,8 @@ test("nowIndex uses America/Chicago across DST", () => {
 });
 
 // ---- acceptance checks against the real built data ----
-const dataPath = new URL("../public/data/segments.geojson", import.meta.url);
+const dataPath = new URL("../public/data/segments.json", import.meta.url);
+const streetsPath = new URL("../public/data/streets.json", import.meta.url);
 test("real data: no missing-data segment renders green at any sampled time", { skip: !existsSync(dataPath) }, () => {
   const fc = JSON.parse(readFileSync(dataPath));
   const times = [];
@@ -140,4 +142,18 @@ test("real data: East Austin paid curbs red Mon-Sat 08:00-23:59, green Sunday an
     assert.notEqual(evaluate(p, fc.meta.zone_types, T(8, 12)).color, "red");     // Sunday
     assert.notEqual(evaluate(p, fc.meta.zone_types, T(10, 0, 30)).color, "red"); // Tue 00:30
   }
+});
+
+test("real data: citywide streets decode and always render grey", { skip: !existsSync(streetsPath) }, () => {
+  const packed = JSON.parse(readFileSync(streetsPath));
+  const fc = decodeStreets(packed);
+  assert.equal(fc.features.length, packed.f.length);
+  assert.ok(fc.features.length > 40000, `only ${fc.features.length} streets`);
+  for (const f of fc.features) {
+    for (const [x, y] of f.geometry.type === "LineString" ? f.geometry.coordinates : f.geometry.coordinates.flat()) {
+      assert.ok(x > -98.1 && x < -97.4 && y > 30.0 && y < 30.7, `street ${f.properties.st} decoded outside Austin: ${x},${y}`);
+    }
+  }
+  const sample = fc.features.filter((_, i) => i % 500 === 0);
+  for (const f of sample) assert.equal(evaluate(f.properties, {}, T(8, 12)).color, "grey");
 });

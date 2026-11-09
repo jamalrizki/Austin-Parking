@@ -8,6 +8,7 @@ Three kinds of features, by property k:
 Time-of-day evaluation happens in the browser (public/engine.js). This script only
 normalises data; it never decides that something is free.
 """
+import gzip
 import json
 import math
 import pathlib
@@ -21,7 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 RAW = ROOT / "pipeline" / "raw"
 RULES = ROOT / "rules"
 OUT = ROOT / "public" / "data"
-PREC = 6  # ~0.1 m; zones are only ~5 m off the centreline so keep precision
+PREC = 6  # used for pay-area polygons only
 
 SIDE_NAMES = {"NC": "north side", "SC": "south side", "EC": "east side", "WC": "west side"}
 ZONE_SOURCE = "City of Austin Parking Inventory (Parking_Inventory_FME_UPDATE_view)"
@@ -37,6 +38,37 @@ def rnd(coords):
     if isinstance(coords[0], (int, float)):
         return [round(coords[0], PREC), round(coords[1], PREC)]
     return [rnd(c) for c in coords]
+
+
+def rnd5(line):
+    """~1 m precision: plenty for a grey 'unknown' base line, ~40% smaller output."""
+    out = []
+    for x, y in line:
+        p = [round(x, 5), round(y, 5)]
+        if not out or out[-1] != p:
+            out.append(p)
+    return out if len(out) > 1 else [out[0], out[0]]
+
+
+def simplify(line, tol_m):
+    """Douglas-Peucker in metres."""
+    if len(line) < 3:
+        return line
+    a, b = line[0], line[-1]
+    i, dmax = 0, 0.0
+    for k in range(1, len(line) - 1):
+        d = seg_dist(line[k], a, b)
+        if d > dmax:
+            i, dmax = k, d
+    if dmax <= tol_m:
+        return [a, b]
+    return simplify(line[:i + 1], tol_m)[:-1] + simplify(line[i:], tol_m)
+
+
+def compact_geom(g, tol_m):
+    """~1 m precision + Douglas-Peucker; zones sit ~5 m off the centreline, so this is visually lossless."""
+    lines = [simplify(rnd5(line), tol_m) for line in lines_of(g)]
+    return {"type": "LineString", "coordinates": lines[0]} if len(lines) == 1 else {"type": "MultiLineString", "coordinates": lines}
 
 
 # ---------- geometry helpers (no shapely needed) ----------
@@ -190,7 +222,6 @@ def build_zones(zone_types, pay_areas, unknown_types):
             "sp": p.get("PARKING_SPACES"),
             "rpp": p.get("RPP_DISTRICT") if p.get("RPP_DISTRICT") not in (None, "None") else None,
             "pa": pa,
-            "seg": seg,
             "zt": p.get("ZONE_TYPE"),
             "src": "zones",
         }
@@ -198,7 +229,7 @@ def build_zones(zone_types, pay_areas, unknown_types):
             props["note"] = note
         if p.get("COMMENTS"):
             props["cmt"] = p["COMMENTS"]
-        feats.append({"type": "Feature", "geometry": {"type": g["type"], "coordinates": rnd(g["coordinates"])}, "properties": props})
+        feats.append({"type": "Feature", "geometry": compact_geom(g, 0.5), "properties": props})
         for line in lines_of(g):
             index.add_line(line)
     return feats, index, covered
@@ -218,11 +249,16 @@ def build_centerline(excl, covered):
             continue
         lo = [p.get(k) for k in ("left_from_address", "left_to_address", "right_from_address", "right_to_address")]
         nums = [int(float(x)) for x in lo if x not in (None, "", "0")]
-        rng = f"{min(nums)}-{max(nums)}" if nums else None
+        rng = (min(nums) // 100) if nums else None  # hundred block, e.g. 11 -> "1100 block"
         seg = str(p.get("segment_id"))
-        feats.append({"type": "Feature", "geometry": {"type": g["type"], "coordinates": rnd(g["coordinates"])},
-                      "properties": {"k": "c", "st": name.title(), "blk": rng, "seg": seg,
-                                     "cov": seg in covered, "src": "centerline"}})
+        props = {"st": name.title(), "seg": seg}
+        if rng is not None:
+            props["blk"] = rng
+        if seg in covered:
+            props["cov"] = 1
+        lines = [simplify(rnd5(line), 1.5) for line in lines_of(g)]
+        geom = {"type": "LineString", "coordinates": lines[0]} if len(lines) == 1 else {"type": "MultiLineString", "coordinates": lines}
+        feats.append({"type": "Feature", "geometry": geom, "properties": props})
     return feats, dropped
 
 
@@ -277,10 +313,52 @@ def build_osm(excl, zone_index):
             r = osm_side(t, side)
             if not r:
                 continue
-            feats.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": rnd(pts)},
+            feats.append({"type": "Feature", "geometry": compact_geom(g, 0.5),
                           "properties": {"k": "o", "st": t.get("name") or "Unnamed street", "side": f"{side} side (OSM way direction)",
                                          "off": off, "v": r["v"], "why": r["why"], "osm": t["osm_id"], "src": "osm"}})
     return feats, skipped_near_city, raw.get("osm_base_timestamp")
+
+
+def pack_streets(feats):
+    """Compact street format, decoded in public/streets.js.
+    {"v":3, "s":1e5, "o":[x0,y0], "n":[names],
+     "f":[[name_i, hundred_block(-1 = none), cov(0/1), part, part...], ...]}
+    Each part is a flat int list of coordinate deltas. Deltas chain across the whole file
+    (features are sorted spatially), so numbers stay small and gzip well."""
+    S = 100000
+    names, name_i = [], {}
+    ox, oy = -97.95, 30.08
+
+    def key(f):
+        g = f["geometry"]
+        x, y = (g["coordinates"] if g["type"] == "LineString" else g["coordinates"][0])[0]
+        # 0.01-degree strips, snaking so consecutive features stay close
+        row = int((y - oy) * 100)
+        return (row, x if row % 2 == 0 else -x)
+
+    out = []
+    px, py = round(ox * S), round(oy * S)
+    for f in sorted(feats, key=key):
+        p = f["properties"]
+        ni = name_i.setdefault(p["st"], len(names))
+        if ni == len(names):
+            names.append(p["st"])
+        g = f["geometry"]
+        parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
+        row = [ni, p.get("blk", -1), p.get("cov", 0)]
+        for line in parts:
+            flat = []
+            for x, y in line:
+                ix, iy = round(x * S), round(y * S)
+                flat += [ix - px, iy - py]
+                px, py = ix, iy
+            row.append(flat)
+        out.append(row)
+    return {"v": 3, "s": S, "o": [ox, oy], "n": names, "f": out}
+
+
+def write(path, obj):
+    path.write_text(json.dumps(obj, separators=(",", ":")))
 
 
 def main():
@@ -294,26 +372,32 @@ def main():
     osm, osm_skipped, osm_ts = build_osm(excl, zindex)
     fetched = (RAW / "fetched_at.txt").read_text().strip()
     OUT.mkdir(parents=True, exist_ok=True)
+    for stale in ("segments.geojson", "areas.geojson"):
+        (OUT / stale).unlink(missing_ok=True)
+    # .json (not .geojson) so static hosts reliably gzip it.
     fc = {"type": "FeatureCollection",
           "meta": {"built_from_fetch": fetched, "osm_base": osm_ts,
                    "sources": {"zones": ZONE_SOURCE, "centerline": CENTERLINE_SOURCE, "osm": OSM_SOURCE},
                    "zone_types": zone_types},
-          "features": centre + osm + zones}
-    (OUT / "segments.geojson").write_text(json.dumps(fc, separators=(",", ":")))
+          "features": osm + zones}
+    write(OUT / "segments.json", fc)
+    write(OUT / "streets.json", pack_streets(centre))
     areas = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": f["geometry"]["type"], "coordinates": rnd(f["geometry"]["coordinates"])},
          "properties": {"name": f["properties"].get("AREA_NAME"), "hours": f["properties"].get("OP_HOURS")}}
         for f in load("pay_areas")["features"] if f.get("geometry")]}
-    (OUT / "areas.geojson").write_text(json.dumps(areas, separators=(",", ":")))
+    write(OUT / "areas.json", areas)
     q = {}
     for z in zones:
         q[z["properties"]["q"]] = q.get(z["properties"]["q"], 0) + 1
     print(f"zones {len(zones)} quality {q}")
-    print(f"centerline kept {len(centre)} dropped {dropped} (covered by zones: {sum(1 for c in centre if c['properties']['cov'])})")
+    print(f"centerline kept {len(centre)} dropped {dropped} (covered by zones: {sum(1 for c in centre if c['properties'].get('cov'))})")
     print(f"osm sides {len(osm)} (ways skipped near city zones: {osm_skipped})")
     if unknown_types:
         print(f"WARNING unknown zone types: {unknown_types}")
-    print(f"segments.geojson {(OUT / 'segments.geojson').stat().st_size / 1e6:.2f} MB")
+    for n in ("segments.json", "streets.json", "areas.json"):
+        raw = (OUT / n).read_bytes()
+        print(f"{n} {len(raw) / 1e6:.2f} MB raw, {len(gzip.compress(raw)) / 1e6:.2f} MB gzip")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Austin Free Parking Finder
 
-A phone-friendly map that answers one question: **where can I park on the street for free, right now or at a time I pick?** Starts with East Austin. No account, no ads, no pop-ups.
+A phone-friendly map that answers one question: **where can I park on the street for free, right now or at a time I pick?** Covers all of Austin. No account, no ads, no pop-ups.
 
 - Green = free now · Amber = free but ends within 2 hours · Red = paid, permit-only, or no parking · Dashed grey = unknown (never shown as free)
 - Each side of the street is coloured separately when the city records it that way.
@@ -11,7 +11,14 @@ Spec: [SPEC.md](SPEC.md) · Data findings and decisions: [pipeline/DATA_NOTES.md
 
 ## How it works
 
-Static site, no backend. A Python pipeline (standard library only) downloads city and OpenStreetMap data and writes `public/data/segments.geojson`. The browser evaluates the rules for any day and time (`public/engine.js`).
+Static site, no backend. A Python pipeline (standard library only) downloads city and OpenStreetMap data and writes two files:
+
+- `public/data/segments.json`: citywide curb zones and OSM curb tags (~0.34 MB gzipped). This loads first, so coloured curbs appear quickly.
+- `public/data/streets.json`: citywide street centerlines in a compact delta-encoded format (~0.72 MB gzipped), decoded by `public/streets.js`. This loads after first paint and draws the dashed grey "unknown" base.
+
+The browser evaluates the rules for any day and time (`public/engine.js`). Colours are applied with MapLibre feature-state, so changing the time re-colours ~7,400 curbs in tens of milliseconds without re-uploading geometry.
+
+Files are `.json` rather than `.geojson` so static hosts reliably gzip them.
 
 | Data | Source |
 |---|---|
@@ -43,8 +50,8 @@ Then open http://localhost:8080.
 
 ```
 pipeline/   fetch_layers.py, hours.py, build_segments.py, validate.py, DATA_NOTES.md
-rules/      zone_types.json, exclusions.json, districts.json, areas/east-austin.geojson
-public/     index.html, app.js, engine.js, styles.css, data/
+rules/      zone_types.json, exclusions.json, districts.json, areas/austin.geojson (fetch area)
+public/     index.html, app.js, engine.js, streets.js, styles.css, data/
 tests/      engine.test.mjs, spot-checks.md
 ```
 

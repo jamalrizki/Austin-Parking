@@ -160,3 +160,15 @@ The JSON field is sometimes truncated mid-string or split one object per line; `
   events) are not covered. The footer says so on every screen.
 - Holiday observed-day shifts (e.g. July 4 on a Saturday) are not applied; the city page lists
   only the holiday itself.
+
+## Citywide expansion (2026-11-08)
+
+Jamal asked for all of Austin rather than East Austin first.
+
+- Fetch area is now `rules/areas/austin.geojson` (a box around the city). City zones were already
+  citywide; centerlines went from 1,562 to 57,993 fetched / 49,002 kept; OSM tagged ways from 108 to 1,362.
+- `rules/areas/east-austin.geojson` is kept for reference (the v1 area in SPEC.md) but nothing uses it.
+- Output was split for load speed: zones + OSM in `segments.json` (critical path), streets in a
+  packed `streets.json` loaded after first paint. Street geometry is rounded to ~1 m and simplified
+  within 1.5 m; zone/OSM geometry ~1 m and 0.5 m.
+- Street segment IDs are no longer shipped to the browser (they were debug-only and cost ~150 KB).
