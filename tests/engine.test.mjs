@@ -88,7 +88,7 @@ test("bad-quality zones and centerlines are never green", () => {
   for (const q of ["conflict", "none", "event", "complex"]) {
     assert.equal(evaluate({ ...eastPaid, q }, types, T(8, 10)).color, "grey");
   }
-  for (const ss of [1, 2, 3, 4, 5]) assert.equal(evaluate({ k: "c", ss }, types, T(8, 10)).color, "grey");
+  assert.equal(evaluate({ k: "c", cov: false }, types, T(8, 10)).color, "grey");
   assert.equal(evaluate({ k: "o", v: "unknown" }, types, T(8, 10)).color, "grey");
 });
 
@@ -119,7 +119,7 @@ test("real data: no missing-data segment renders green at any sampled time", { s
   let checked = 0;
   for (const f of fc.features) {
     const p = f.properties;
-    const missing = (p.k === "z" && !["ok", "one"].includes(p.q)) || (p.k === "o" && p.v !== "free");
+    const missing = p.k === "c" || (p.k === "z" && !["ok", "one"].includes(p.q)) || (p.k === "o" && p.v !== "free");
     if (!missing) continue;
     for (const t of times) {
       const c = evaluate(p, fc.meta.zone_types, t).color;
@@ -144,7 +144,7 @@ test("real data: East Austin paid curbs red Mon-Sat 08:00-23:59, green Sunday an
   }
 });
 
-test("real data: citywide streets decode; only unrestricted local streets are green", { skip: !existsSync(streetsPath) }, () => {
+test("real data: citywide streets decode and always render grey", { skip: !existsSync(streetsPath) }, () => {
   const packed = JSON.parse(readFileSync(streetsPath));
   const fc = decodeStreets(packed);
   assert.equal(fc.features.length, packed.f.length);
@@ -154,21 +154,6 @@ test("real data: citywide streets decode; only unrestricted local streets are gr
       assert.ok(x > -98.1 && x < -97.4 && y > 30.0 && y < 30.7, `street ${f.properties.st} decoded outside Austin: ${x},${y}`);
     }
   }
-  const counts = {};
-  for (const f of fc.features) {
-    const ss = f.properties.ss;
-    counts[ss] = (counts[ss] || 0) + 1;
-    const c = evaluate(f.properties, {}, T(8, 12)).color;
-    // Only "no restriction on record, outside paid areas, not a major/private road" may be green.
-    assert.equal(c, ss === 0 || ss === 6 ? "green" : "grey", `street ${f.properties.st} ss=${ss} -> ${c}`);
-  }
-  assert.ok(counts[0] > 20000 && counts[2] > 0 && counts[5] > 0, JSON.stringify(counts));
-});
-
-test("free-unless-signed streets are free all week and pass every window filter", () => {
-  const r = evaluate({ k: "c", ss: 0 }, types, T(9, 12));
-  assert.equal(r.color, "green");
-  assert.equal(r.until, null);
-  for (const w of ["any", "120", "240", "overnight"]) assert.ok(meetsWindow(r, w, T(9, 12)));
-  assert.ok(evaluate({ k: "c", ss: 6 }, types, T(9, 12)).caveat);
+  const sample = fc.features.filter((_, i) => i % 500 === 0);
+  for (const f of sample) assert.equal(evaluate(f.properties, {}, T(8, 12)).color, "grey");
 });

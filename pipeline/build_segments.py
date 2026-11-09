@@ -180,7 +180,7 @@ def resolve_hours(p):
 
 
 def build_zones(zone_types, pay_areas, unknown_types):
-    feats, index, covered, inventory_rpp = [], SegIndex(), set(), set()
+    feats, index, covered = [], SegIndex(), set()
     for f in load("zones")["features"]:
         p, g = f["properties"], f["geometry"]
         if not g or not lines_of(g):
@@ -201,8 +201,6 @@ def build_zones(zone_types, pay_areas, unknown_types):
         block = (p.get("BLOCK_NAME") or "").strip()
         m = re.match(r"^(.*?)\s+(\d+)\s+(NC|SC|EC|WC)$", block)
         street, num, side = (m.group(1), m.group(2), m.group(3)) if m else (block, None, None)
-        if "Residential Parking Permit" in [primary] + others and num:
-            inventory_rpp.add((norm_street(street), int(num) // 100))
         seg = (p.get("SEGMENT_ID") or "").strip() or None
         if seg:
             covered.add(seg)
@@ -234,42 +232,12 @@ def build_zones(zone_types, pay_areas, unknown_types):
         feats.append({"type": "Feature", "geometry": compact_geom(g, 0.5), "properties": props})
         for line in lines_of(g):
             index.add_line(line)
-    return feats, index, covered, inventory_rpp
+    return feats, index, covered
 
 
 # ---------- centerline ----------
-# Street status codes (ss), shipped in streets.json and interpreted in public/engine.js.
-SS_FREE, SS_COVERED, SS_PAY_AREA, SS_RPP_RISK, SS_MAJOR, SS_PRIVATE, SS_FREE_BUSY = 0, 1, 2, 3, 4, 5, 6
-
-
-ABBR = {"STREET": "ST", "AVENUE": "AVE", "ROAD": "RD", "DRIVE": "DR", "LANE": "LN", "TRAIL": "TRL",
-        "BOULEVARD": "BLVD", "COURT": "CT", "CIRCLE": "CIR", "PLACE": "PL", "PARKWAY": "PKWY", "TERRACE": "TER",
-        "COVE": "CV", "EAST": "E", "WEST": "W", "NORTH": "N", "SOUTH": "S", "JUNIOR": "JR"}
-
-
-def norm_street(s):
-    words = re.sub(r"[.,]", " ", (s or "").upper()).split()
-    return " ".join(ABBR.get(w, w) for w in words)
-
-
-def rpp_risk_blocks(inventory_rpp):
-    """(street, hundred_block) where homes are permit-eligible but the curb inventory has no RPP zone."""
-    keys = set()
-    for f in load("rpp_properties")["features"]:
-        p = f["properties"]
-        if p.get("BLOCK_NO") is None or not p.get("STREET_NAME"):
-            continue
-        k = (norm_street(p["STREET_NAME"]), int(p["BLOCK_NO"]) // 100)
-        if k not in inventory_rpp:
-            keys.add(k)
-    return keys
-
-
-def build_centerline(excl, covered, pay_areas, rpp_risk):
+def build_centerline(excl, covered):
     name_re = re.compile("|".join(excl["name_patterns"]), re.I)
-    private = set(excl.get("private_road_class", []))
-    major = set(excl.get("major_road_class", []))
-    busy = set(excl.get("busy_road_class", []))
     feats, dropped = [], 0
     for f in load("centerline")["features"]:
         p, g = f["properties"], f["geometry"]
@@ -282,26 +250,12 @@ def build_centerline(excl, covered, pay_areas, rpp_risk):
         lo = [p.get(k) for k in ("left_from_address", "left_to_address", "right_from_address", "right_to_address")]
         nums = [int(float(x)) for x in lo if x not in (None, "", "0")]
         rng = (min(nums) // 100) if nums else None  # hundred block, e.g. 11 -> "1100 block"
-        hundreds = set(range(min(nums) // 100, max(nums) // 100 + 1)) if nums and max(nums) - min(nums) < 2000 else set()
         seg = str(p.get("segment_id"))
-        mid = midpoint(g)
-        if seg in covered:
-            ss = SS_COVERED
-        elif mid and any(point_in_poly(mid, r) for a in pay_areas for r in a["polys"]):
-            ss = SS_PAY_AREA
-        elif any((norm_street(name), h) in rpp_risk for h in hundreds):
-            ss = SS_RPP_RISK
-        elif rc in private:
-            ss = SS_PRIVATE
-        elif rc in major:
-            ss = SS_MAJOR
-        elif rc in busy:
-            ss = SS_FREE_BUSY
-        else:
-            ss = SS_FREE
-        props = {"st": name.title(), "seg": seg, "ss": ss}
+        props = {"st": name.title(), "seg": seg}
         if rng is not None:
             props["blk"] = rng
+        if seg in covered:
+            props["cov"] = 1
         lines = [simplify(rnd5(line), 1.5) for line in lines_of(g)]
         geom = {"type": "LineString", "coordinates": lines[0]} if len(lines) == 1 else {"type": "MultiLineString", "coordinates": lines}
         feats.append({"type": "Feature", "geometry": geom, "properties": props})
@@ -368,8 +322,7 @@ def build_osm(excl, zone_index):
 def pack_streets(feats):
     """Compact street format, decoded in public/streets.js.
     {"v":3, "s":1e5, "o":[x0,y0], "n":[names],
-     "f":[[name_i, hundred_block(-1 = none), status, part, part...], ...]}
-    status: see SS_* constants (0 free unless signed ... 6 free, busier road)
+     "f":[[name_i, hundred_block(-1 = none), cov(0/1), part, part...], ...]}
     Each part is a flat int list of coordinate deltas. Deltas chain across the whole file
     (features are sorted spatially), so numbers stay small and gzip well."""
     S = 100000
@@ -392,7 +345,7 @@ def pack_streets(feats):
             names.append(p["st"])
         g = f["geometry"]
         parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
-        row = [ni, p.get("blk", -1), p["ss"]]
+        row = [ni, p.get("blk", -1), p.get("cov", 0)]
         for line in parts:
             flat = []
             for x, y in line:
@@ -401,7 +354,7 @@ def pack_streets(feats):
                 px, py = ix, iy
             row.append(flat)
         out.append(row)
-    return {"v": 4, "s": S, "o": [ox, oy], "n": names, "f": out}
+    return {"v": 3, "s": S, "o": [ox, oy], "n": names, "f": out}
 
 
 def write(path, obj):
@@ -414,9 +367,8 @@ def main():
     pay_areas = [{"name": f["properties"].get("AREA_NAME"), "hours": f["properties"].get("OP_HOURS"), "polys": polys_of(f["geometry"])}
                  for f in load("pay_areas")["features"] if f.get("geometry")]
     unknown_types = {}
-    zones, zindex, covered, inventory_rpp = build_zones(zone_types, pay_areas, unknown_types)
-    rpp_risk = rpp_risk_blocks(inventory_rpp)
-    centre, dropped = build_centerline(excl, covered, pay_areas, rpp_risk)
+    zones, zindex, covered = build_zones(zone_types, pay_areas, unknown_types)
+    centre, dropped = build_centerline(excl, covered)
     osm, osm_skipped, osm_ts = build_osm(excl, zindex)
     fetched = (RAW / "fetched_at.txt").read_text().strip()
     OUT.mkdir(parents=True, exist_ok=True)
@@ -439,11 +391,7 @@ def main():
     for z in zones:
         q[z["properties"]["q"]] = q.get(z["properties"]["q"], 0) + 1
     print(f"zones {len(zones)} quality {q}")
-    ssn = {}
-    for c in centre:
-        ssn[c["properties"]["ss"]] = ssn.get(c["properties"]["ss"], 0) + 1
-    print(f"centerline kept {len(centre)} dropped {dropped}; status counts {dict(sorted(ssn.items()))} "
-          f"(0 free,1 covered,2 pay area,3 rpp risk,4 major,5 private,6 free busy); rpp risk blocks {len(rpp_risk)}")
+    print(f"centerline kept {len(centre)} dropped {dropped} (covered by zones: {sum(1 for c in centre if c['properties'].get('cov'))})")
     print(f"osm sides {len(osm)} (ways skipped near city zones: {osm_skipped})")
     if unknown_types:
         print(f"WARNING unknown zone types: {unknown_types}")

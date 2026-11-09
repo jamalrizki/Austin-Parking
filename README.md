@@ -2,7 +2,7 @@
 
 A phone-friendly map that answers one question: **where can I park on the street for free, right now or at a time I pick?** Covers all of Austin. No account, no ads, no pop-ups.
 
-- Green = free now (city record) · Light green = free unless signed (no meter or permit zone on record, outside paid areas) · Amber = free but ends within 2 hours · Red = paid, permit-only, or no parking · Dashed grey = unknown
+- Green = free now · Amber = free but ends within 2 hours · Red = paid, permit-only, or no parking · Dashed grey = unknown (never shown as free)
 - Each side of the street is coloured separately when the city records it that way.
 - Tap any street to see why it's that colour, where the data came from, and when it was fetched.
 - **Always check posted signs.** This map is a guide, not a guarantee.

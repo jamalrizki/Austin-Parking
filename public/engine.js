@@ -144,33 +144,15 @@ export function evaluateOsm(p) {
   return { ...m, reason: p.why, until: null, caveat: "Community-mapped in OpenStreetMap; not verified by the city." };
 }
 
-const FREE_DEFAULT = "No meter, permit or restriction zone is on record for this street, and it's outside Austin's paid-parking areas. Street parking here is free unless a sign, painted curb, hydrant, driveway or intersection says otherwise.";
-
 export function evaluateCenterline(p) {
-  switch (p.ss) {
-    case 0:
-      return { color: "green", title: "Free unless signed", reason: FREE_DEFAULT, until: null, cat: "default" };
-    case 6:
-      return { color: "green", title: "Free unless signed", reason: FREE_DEFAULT, until: null, cat: "default",
-               caveat: "Busier road: no-parking signs and bike lanes are common here, so look before you park." };
-    case 1:
-      return { color: "grey", title: "See coloured curbs", until: null,
-               reason: "Some curbs on this block are in city records (the coloured lines beside it). Any side without a coloured line isn't recorded." };
-    case 2:
-      return { color: "grey", title: "Unknown — check signs", until: null,
-               reason: "Inside a pay-to-park area, but this curb isn't in the city's meter records. It could be paid." };
-    case 3:
-      return { color: "grey", title: "Possible permit parking", until: null,
-               reason: "Homes on this block are eligible for residential parking permits, but the city's curb records don't show the permit zone. It may be permit-only — check signs." };
-    case 4:
-      return { color: "grey", title: "Major road — check signs", until: null,
-               reason: "Major arterial. Parking is often prohibited or limited to certain hours on these roads." };
-    case 5:
-      return { color: "grey", title: "Private street", until: null,
-               reason: "Private road (for example The Domain). Parking rules are set by the property owner, not the city." };
-    default:
-      return { color: "grey", title: "Unknown — check signs", until: null, reason: "No parking data on record for this street." };
-  }
+  return {
+    color: "grey",
+    title: "Unknown — check signs",
+    reason: p.cov
+      ? "Some curbs on this block are in city records (coloured lines beside it); anything not coloured is unrecorded."
+      : "No paid, permit or restriction record for this street in city data. It may well be free, but this map won't guess.",
+    until: null,
+  };
 }
 
 export function evaluate(p, types, t) {

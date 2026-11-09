@@ -67,7 +67,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 }
 .legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .sw { display: inline-block; width: 14px; height: 4px; border-radius: 2px; }
-.sw.green { background: var(--green); } .sw.green.dim { opacity: .5; } .sw.amber { background: var(--amber); }
+.sw.green { background: var(--green); } .sw.amber { background: var(--amber); }
 .sw.red { background: var(--red); }
 .sw.grey { background: repeating-linear-gradient(90deg, #a3abb8 0 3px, transparent 3px 6px); }
 

@@ -21,8 +21,8 @@ ssize = STREETS.stat().st_size / 1e6
 if ssize > MAX_STREETS_MB:
     errors.append(f"streets.json is {ssize:.2f} MB (limit {MAX_STREETS_MB})")
 streets = json.loads(STREETS.read_text())
-if streets.get("v") != 4:
-    errors.append(f"streets.json format v{streets.get('v')} (expected 4)")
+if streets.get("v") != 3:
+    errors.append(f"streets.json format v{streets.get('v')} (expected 3)")
 if len(streets["f"]) < MIN_STREETS:
     errors.append(f"only {len(streets['f'])} streets (expected >= {MIN_STREETS}); fetch may be incomplete")
 fc = json.loads(SEG.read_text())
