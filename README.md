@@ -26,7 +26,7 @@ This project builds that inventory from public data instead. Every street side i
 | Wide local residential street (28 ft+, 2 lanes or fewer) | Parking exists |
 | OpenStreetMap tags a parking lane on that side | Parking exists |
 | **Parked cars seen at that curb in 2 or more aerial surveys** | Parking exists (local streets and collectors only) |
-| "No Parking" sign, no curb space between driveways, median side of a divided road, too narrow, bike lane at the curb, OSM "no parking" | Red |
+| "No Parking" sign, no curb space between driveways (after the legal clearances: 20 ft from crosswalks at corners, 15 ft each side of a fire hydrant, 30 ft before a stop sign, yield sign or traffic signal), median side of a divided road, too narrow, bike lane at the curb, OSM "no parking" | Red |
 | None of the above | Dashed grey |
 
 ## Aerial parked-car detection (machine learning)

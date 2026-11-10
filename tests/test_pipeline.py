@@ -119,6 +119,32 @@ class SignStretchTest(unittest.TestCase):
         self.assertEqual([(r[0]["t"] if r else None) for _, _, r, _ in st], ["No Parking", "Residential Parking Permit"])
 
 
+class ClearanceTest(unittest.TestCase):
+    def test_hydrant_stop_sign_and_signal(self):
+        import json
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        pts = lambda *ps: json.dumps({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": p}, "properties": {}} for p in ps]})
+        # 100 m two-way street heading east; left = north
+        (tmp / "hydrants.geojson").write_text(pts(pt(50, 8)))
+        (tmp / "stop_signs.geojson").write_text(pts(pt(95, -7), pt(95, 7)))  # R: our approach; L: faces the cross street
+        (tmp / "signals.geojson").write_text(pts(pt(102, 0)))
+        old, S.RAW = S.RAW, tmp
+        try:
+            lines = {"a": [[pt(0, 0), pt(100, 0)]]}
+            geo = {"a": S._pieces(lines["a"])}
+            grid = S.Grid(cell=60)
+            grid.add("a", lines["a"])
+            spans, st = S.clearance_spans(geo, grid, {"a": 30}, {"a": "B"})
+        finally:
+            S.RAW = old
+        r = lambda v: [(round(a, 1), round(b, 1)) for a, b in v]
+        self.assertEqual(r(spans[("a", "L")]), [(45.4, 54.6)])                 # hydrant: 15 ft each way
+        self.assertEqual(r(spans[("a", "R")]), [(85.9, 95.0), (84.8, 100.0)])  # stop sign 30 ft back; signal 30 ft + corner
+        self.assertEqual(st, {"hydrants": 1, "stop_yield": 1, "signal_ends": 1})
+
+
 class CutLinesTest(unittest.TestCase):
     def test_cut_middle_of_a_bent_line(self):
         line = [pt(0, 0), pt(100, 0), pt(100, 100)]

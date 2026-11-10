@@ -165,7 +165,7 @@ const NO_ROOM = {
   [-5]: "The city's transportation network shows a travel lane at the curb and no parking lane here, so there's no space to park.",
   [-6]: "The city's transportation network shows a bike lane at the curb here, so there's no space to park.",
   [-7]: "The city's transportation network lists this street as under 24 ft wide: too narrow to park without blocking traffic.",
-  [-10]: "Driveways and parking-lot entrances (city aerial survey) plus the 20 ft corner clearance leave no gap long enough for a car on this side.",
+  [-10]: "Driveways and parking-lot entrances (city aerial survey), the 20 ft corner clearance, and the legal clearances around fire hydrants (15 ft) and before stop signs and signals (30 ft) leave no gap long enough for a car on this side.",
   [-12]: "OpenStreetMap contributors have mapped no parking on this side of the street (community data, not city records).",
 };
 

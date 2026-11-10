@@ -481,7 +481,10 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         car_ok[seg] = rc in ("6", "8", "9")
     stats["median_sides"] = len(medians)
     widths = {seg: ((ctn or {}).get(seg) or {}).get("PAVEMENT_WIDTH") for seg in kept}
-    spaces, n_cuts = curb_spaces(lines, widths, RAW / "curb_cuts.jsonl")
+    one_way = {seg: ((props or {}).get(seg) or {}).get("one_way") for seg in kept}
+    clear, clear_stats = clearance_spans(geo, grid, widths, one_way)
+    stats.update({f"clearance_{k}": v for k, v in clear_stats.items()})
+    spaces, n_cuts = curb_spaces(lines, widths, RAW / "curb_cuts.jsonl", clear)
     stats["curb_cut_polygons"] = n_cuts
     # Presence/absence evidence beyond city records.
     osm = osm_evidence(lines, osm_side_fn) if osm_side_fn else {}
@@ -625,9 +628,93 @@ def _project(x, y, pieces):
     return best
 
 
-def curb_spaces(lines, widths, path):
-    """{(seg, side): car spaces} counting curb gaps between driveways/lots, minus corner clearance.
-    Returns ({}, 0) if the curb-cut file is missing."""
+HYDRANT_M = 15 * FT    # Tex. Transp. Code 545.302(b)(2): no parking within 15 ft of a fire hydrant
+APPROACH_M = 30 * FT   # 545.302(b)(4): ... within 30 ft on the approach to a stop/yield sign or traffic signal
+NEAR_END_M = 30.0      # a stop/yield sign this close to a block end controls that end
+
+
+def _link(pt, geo, grid, widths, extra_m):
+    """(seg, along, side, total) of the street a roadside point belongs to: the nearest segment whose
+    curb is within extra_m of the point (not beyond either end), else None."""
+    x, y = _xy(pt)
+    best = None
+    for s in grid.near(pt):
+        pieces, total = geo[s]
+        if not pieces:
+            continue
+        along, d, side, clamped, _ = _project(x, y, pieces)
+        if clamped or d > (widths.get(s) or 30) * FT / 2 + extra_m:
+            continue
+        if best is None or d < best[0]:
+            best = (d, s, along, side, total)
+    return best and best[1:]
+
+
+def clearance_spans(geo, grid, widths, one_way):
+    """{(seg, side): [(a_m, b_m)]} curb stretches where Texas law bans parking: 15 ft either side of a
+    fire hydrant, and 30 ft on the approach to a stop/yield sign (measured back from the sign) or to
+    a traffic signal (measured back from the corner, which the corner clearance places 20 ft from
+    the centreline end). Approach = the curb on the right of traffic heading to that end: R side at
+    the far end, L side at the near end; on one-way streets both curbs at the downstream end.
+    Missing files (optional fetches) are skipped. Returns (spans, stats)."""
+    spans, st = {}, {"hydrants": 0, "stop_yield": 0, "signal_ends": 0}
+
+    def load_pts(name):
+        p = RAW / f"{name}.geojson"
+        return [f["geometry"]["coordinates"] for f in json.loads(p.read_text())["features"]] if p.exists() else []
+
+    def approach(seg, side, at_end):
+        ow = (one_way.get(seg) or "").upper()
+        if ow == "FT":
+            return at_end
+        if ow == "TF":
+            return not at_end
+        return (side == "R") == at_end
+
+    for pt in load_pts("hydrants"):
+        hit = _link(pt, geo, grid, widths, 6.0)
+        if hit:
+            seg, a, side, _ = hit
+            spans.setdefault((seg, side), []).append((a - HYDRANT_M, a + HYDRANT_M))
+            st["hydrants"] += 1
+    for pt in load_pts("stop_signs"):
+        hit = _link(pt, geo, grid, widths, 10.0)
+        if not hit:
+            continue
+        seg, a, side, total = hit
+        # centreline ends sit mid-intersection; a stop sign stands behind the crosswalk, ~6-20 m back
+        near_start, near_end = a <= NEAR_END_M, total - a <= NEAR_END_M
+        if not (near_start or near_end):
+            continue  # mid-block
+        at_end = near_end and (not near_start or total - a <= a)  # the nearer end on short blocks
+        if not approach(seg, side, at_end):
+            continue  # it faces the cross street or the other direction
+        spans.setdefault((seg, side), []).append((a - APPROACH_M, a) if at_end else (a, a + APPROACH_M))
+        st["stop_yield"] += 1
+    reach = APPROACH_M + CORNER_CLEAR_M
+    for pt in load_pts("signals"):
+        x, y = _xy(pt)
+        for s in grid.near(pt):
+            pieces, total = geo[s]
+            if not pieces:
+                continue
+            ends = [(False, pieces[0][0], pieces[0][1])]
+            q = pieces[-1]
+            ends.append((True, q[0] + q[2], q[1] + q[3]))
+            for at_end, ex, ey in ends:
+                if math.hypot(ex - x, ey - y) > 25:
+                    continue
+                for side in ("L", "R"):
+                    if approach(s, side, at_end):
+                        spans.setdefault((s, side), []).append((total - reach, total) if at_end else (0.0, reach))
+                st["signal_ends"] += 1
+    return spans, st
+
+
+def curb_spaces(lines, widths, path, extra=None):
+    """{(seg, side): car spaces} counting curb gaps between driveways/lots, minus corner clearance
+    and the legal clearances in `extra` ({(seg, side): [(a, b)]}). Returns ({}, 0) if the curb-cut
+    file is missing."""
     if not path.exists():
         return {}, 0
     geo = {s: _pieces(ls) for s, ls in lines.items()}
@@ -660,6 +747,8 @@ def curb_spaces(lines, widths, path):
                     a, b = min(s for s, _ in v), max(s for s, _ in v)
                     if 1.5 <= b - a <= 150:
                         cuts.setdefault((seg, side), []).append((a, b))
+    for k, v in (extra or {}).items():
+        cuts.setdefault(k, []).extend(v)
     out = {}
     for seg, (pieces, total) in geo.items():
         for side in ("L", "R"):

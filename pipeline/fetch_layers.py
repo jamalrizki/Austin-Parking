@@ -97,6 +97,45 @@ def fetch_query(name, url, where, fields, geometry=True):
     return {"type": "FeatureCollection", "features": feats}
 
 
+def fetch_points(url, where, fields, order="OBJECTID"):
+    """Paged ArcGIS point query -> FeatureCollection of points with the given fields."""
+    feats, offset = [], 0
+    while True:
+        q = urllib.parse.urlencode({"where": where, "outFields": fields, "outSR": 4326, "f": "geojson",
+                                    "orderByFields": order, "resultOffset": offset, "resultRecordCount": 2000})
+        got = get(f"{url}/query?{q}").get("features", [])
+        feats += [f for f in got if f.get("geometry")]
+        offset += len(got)
+        if not got:  # page until empty: a layer's own page limit can be below 2000
+            break
+    return {"type": "FeatureCollection", "features": feats}
+
+
+# Places Texas Transportation Code 545.302(b) bans parking near: fire hydrants (15 ft) and the
+# approach to a stop sign, yield sign or traffic signal (30 ft). Used for curb-space counts only.
+# The hydrant layer is the fire department's yearly inspection map (its name carries the year), so
+# these are optional: on failure the previous file is kept and the build runs without them.
+CLEARANCE_LAYERS = {
+    "hydrants": (f"{ARCGIS}/2026_All_Hydrants_Map_WFL1/FeatureServer/0", "1=1", "OBJECTID,HydrantStatus", "OBJECTID", 20000),
+    "stop_signs": (f"{SIGNS}/0", "ASSET_STATUS=1 AND (MUTCD_CODE LIKE 'R1-1%' OR MUTCD_CODE LIKE 'R1-2%')",
+                   "MUTCD_CODE,ASSET_LOCATION_ID", "OBJECTID_1", 10000),
+    "signals": (f"{ARCGIS}/TRANSPORTATION_signals2/FeatureServer/0", "SIGNAL_STATUS IN ('TURNED_ON','ON FLASH') AND SIGNAL_TYPE='TRAFFIC'",
+                "SIGNAL_ID,SIGNAL_STATUS", "OBJECTID", 1000),
+}
+
+
+def fetch_clearances():
+    for name, (url, where, fields, order, minimum) in CLEARANCE_LAYERS.items():
+        try:
+            fc = fetch_points(url, where, fields, order)
+            if len(fc["features"]) < minimum:
+                raise ValueError(f"only {len(fc['features'])} features")
+            (RAW / f"{name}.geojson").write_text(json.dumps(fc))
+            print(f"  {name}: {len(fc['features'])}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  WARNING {name} not refreshed ({e}); keeping the previous file", file=sys.stderr)
+
+
 CURB_CUTS = f"{ARCGIS}/impervious_cover_2023/FeatureServer/0"
 
 
@@ -205,6 +244,7 @@ def main():
         sys.exit("ERROR: curb-cut fetch looks incomplete")
     if fetch_roads(RAW / "roads.jsonl") < 10000:
         sys.exit("ERROR: road-outline fetch looks incomplete")
+    fetch_clearances()
     out["centerline"] = fetch_centerline(poly)
     out["osm"] = fetch_osm(poly)
     for name, fc in out.items():

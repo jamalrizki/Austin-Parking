@@ -377,3 +377,27 @@ subtype table; the field domain mislabels 4 as Parking), sub-types 1 "L", 2 "T",
 ACTIVE only, fetched as `raw/markings.geojson`. 3,490 marks link to 508 sides; 406 sides have 2+
 (the evidence threshold; evidence bit 3 in streets.json). Mostly on blocks with curb zones or sign
 rules already; adds parking evidence to ~10 grey sides and settles the side of a one-curb lane.
+
+## 2026-11-10: sign arrows by type checked against city zones; legal clearances
+
+**Arrows on pay / permit / time-limit signs.** Where a side has both a city curb zone and arrow
+signs of the same type, the stretch the signs cover (as built) was compared with the zone's extent
+along the curb (mean overlap, IoU; "covered" = share of the zone the signs cover):
+pay 1,051 sides 57% (95% covered) vs arrows read backwards 33% vs whole side 45%; permit 468
+sides 66% (94%) vs 43% vs 51%; time limit 29 sides 67% vs 38% vs 48%. The arrow reading is
+confirmed by city data, and paid/permit stretches are almost never left looking free. No Parking
+signs vs the city's No Parking zones: 35% / 39% / 42%, i.e. those signs and zones don't describe
+the same stretches either way, so this test says nothing for No Parking; the parked-car calibration
+(86% fit) stands. Sides with a city zone are drawn from the zone and are not split.
+
+**Legal clearances in curb-space counts** (Tex. Transp. Code 545.302(b), text checked): 15 ft each
+side of a fire hydrant; 30 ft on the approach to a stop sign, yield sign or traffic signal; 20 ft
+from a crosswalk at an intersection (already used). Sources, fetched optionally (a failed fetch
+keeps the previous file): `2026_All_Hydrants_Map_WFL1` (fire department inspection map, 28,718
+hydrants; its name carries the year), stop/yield signs from the sign inventory (MUTCD R1-1/R1-2,
+16,463), `TRANSPORTATION_signals2` (turned-on/flashing traffic signals, 1,108; pedestrian beacons
+left out). Linked: 14,444 hydrants (within half the pavement width + 6 m of a kept street), 13,668
+stop/yield signs (within 30 m of a block end, on the curb of traffic heading to that end; one-way
+streets by direction), 4,003 signalised block ends. Counted spaces 812,895 -> 773,465 (-4.9%);
+"no car-length gap" red sides 495 -> 639. Spot check of 6 newly red sides: short stub blocks
+(cul-de-sac necks) where a stop sign, hydrant and corner clearance leave no legal car length.
