@@ -201,9 +201,41 @@ def arrow_dir(arr, side):
     return 1 if (arr == "right") == (side == "L") else -1
 
 
-def sign_stretches(signs, side, total):
+NO_PARKING_ALWAYS = {"t": "No Parking", "w": [[d, 0, 1440] for d in range(7)], "q": "ok", "note": None}
+
+
+def painted_curbs(geo, grid, widths):
+    """{(seg, side): [(lo_m, hi_m, message)]} red / yellow painted curbs (no parking without a sign)
+    from raw/painted_curbs.geojson. Markings whose middle lies within 60% of half the pavement width
+    of the centreline are median noses or islands, not a curb you could park at, and are skipped."""
+    path = RAW / "painted_curbs.geojson"
+    if not path.exists():
+        return {}
+    out = {}
+    for f in json.loads(path.read_text())["features"]:
+        p, g = f["properties"], f.get("geometry")
+        if not g or "CHANNEL" in (p.get("COMMENTS") or "").upper():
+            continue
+        pts = [q for line in lines_of(g) for q in line]
+        if not pts:
+            continue
+        hit = _link(pts[len(pts) // 2], geo, grid, widths, 6.0)
+        if not hit:
+            continue
+        seg, _, side, total = hit
+        pieces = geo[seg][0]
+        if _project(*_xy(pts[len(pts) // 2]), pieces)[1] < 0.6 * (widths.get(seg) or 30) * FT / 2:
+            continue
+        al = [_project(*_xy(q), pieces)[0] for q in pts]
+        msg = f"{(p.get('COLOR') or 'Painted').title()} painted curb, no parking (city pavement-markings inventory)"
+        out.setdefault((seg, side), []).append((max(0.0, min(al)), min(total, max(al)), msg))
+    return out
+
+
+def sign_stretches(signs, side, total, painted=()):
     """Split one side of a block by where its signs apply.
-    signs: [(along_m, arrow, rule or None for spot signs, message)].
+    signs: [(along_m, arrow, rule or None for spot signs, message)]; painted: [(lo, hi, message)]
+    red/yellow curbs, which are no-parking stretches of their own.
     Returns [(lo_m, hi_m, rules, messages)] covering 0..total, or None when the block rules all
     cover the whole side (no arrows, or no sign closing the stretch they start).
 
@@ -213,8 +245,9 @@ def sign_stretches(signs, side, total):
     car (or for a car plus the 20 ft corner clearance at a block end) is folded into the stretches
     beside it, so the map never shows a sliver as open."""
     blocks = [s for s in signs if s[2] is not None]
-    if not blocks or total <= 0:
+    if (not blocks and not painted) or total <= 0:
         return None
+    paint_key = json.dumps(NO_PARKING_ALWAYS, sort_keys=True)
     groups = {}
     for s in blocks:
         groups.setdefault(json.dumps(s[2], sort_keys=True), []).append(s)
@@ -231,6 +264,7 @@ def sign_stretches(signs, side, total):
             if d <= 0:
                 lo = next((b for b, e in reversed(dirs[:i]) if e == 1), 0.0)
             spans.append((max(0.0, lo), min(total, hi), key))
+    spans += [(max(0.0, lo), min(total, hi), paint_key) for lo, hi, _ in painted if hi > lo]
     cuts = sorted({0.0, total} | {x for lo, hi, _ in spans for x in (lo, hi)})
     pieces = []
     for a, b in zip(cuts, cuts[1:]):
@@ -266,6 +300,9 @@ def sign_stretches(signs, side, total):
         for a, _, rule, msg in sorted(signs, key=lambda s: s[0]):
             covers = rule is not None and json.dumps(rule, sort_keys=True) in keys
             if (covers or (rule is None and lo <= a <= hi)) and msg not in msgs:
+                msgs.append(msg)
+        for plo, phi, msg in painted:
+            if paint_key in keys and plo < hi and phi > lo and msg not in msgs:
                 msgs.append(msg)
         rules = [json.loads(k) for k in sorted(keys)]
         out.append((lo, hi, rules, msgs))
@@ -484,6 +521,17 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
     one_way = {seg: ((props or {}).get(seg) or {}).get("one_way") for seg in kept}
     clear, clear_stats = clearance_spans(geo, grid, widths, one_way)
     stats.update({f"clearance_{k}": v for k, v in clear_stats.items()})
+    # Red / yellow painted curbs: a no-parking rule on their own stretch of the side.
+    painted = painted_curbs(geo, grid, widths)
+    for k, v in painted.items():
+        e = entries.setdefault(k, {"rules": [], "msgs": []})
+        if NO_PARKING_ALWAYS not in e["rules"]:
+            e["rules"].append(dict(NO_PARKING_ALWAYS))
+        for _, _, msg in v:
+            if msg not in e["msgs"]:
+                e["msgs"].append(msg)
+        clear.setdefault(k, []).extend((lo, hi) for lo, hi, _ in v)
+    stats["painted_curb_sides"] = len(painted)
     spaces, n_cuts = curb_spaces(lines, widths, RAW / "curb_cuts.jsonl", clear)
     stats["curb_cut_polygons"] = n_cuts
     # Presence/absence evidence beyond city records.
@@ -501,7 +549,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
     marks = marking_counts(lines, grid)
     marked = {k for k, n in marks.items() if n >= MIN_MARKS}
     stats["marked_sides"] = len(marked)
-    split = {k: sign_stretches(placed.get(k, []), k[1], geo[k[0]][1]) for k, e in entries.items() if e["rules"]}
+    split = {k: sign_stretches(placed.get(k, []), k[1], geo[k[0]][1], painted.get(k, ())) for k, e in entries.items() if e["rules"]}
 
     def sign_says(seg, sd):
         """'lane' if a curb zone, painted spaces or a sign shows parking is regulated (so it exists)

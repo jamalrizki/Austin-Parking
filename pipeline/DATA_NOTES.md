@@ -401,3 +401,17 @@ stop/yield signs (within 30 m of a block end, on the curb of traffic heading to 
 streets by direction), 4,003 signalised block ends. Counted spaces 812,895 -> 773,465 (-4.9%);
 "no car-length gap" red sides 495 -> 639. Spot check of 6 newly red sides: short stub blocks
 (cul-de-sac necks) where a stop sign, hydrant and corner clearance leave no legal car length.
+
+## 2026-11-10: Street View check; red / yellow painted curbs
+
+Street View survey of 20 random green sides (tests/spot-checks.md #4-23): 18 match, 1 partly
+(Tower Trl 5200: red-painted curb around a hydrant, no sign), 1 can't tell (only 2011 imagery).
+
+Painted curbs mean no parking without any sign, so the sign inventory misses them. Source:
+`Markings_Specialty_Line_Read_Only`, SPECIALTY_LINE_TYPE = 'Curbs', COLOR Red/Yellow, ACTIVE
+(794 lines; optional fetch as `raw/painted_curbs.geojson`). Lines whose middle is within 60% of
+half the pavement width of the centreline are median noses / islands and are skipped (~220);
+"Channelizer" comments skipped. Each remaining line is an all-week No Parking stretch on its side
+(`sides.painted_curbs`, `sign_stretches(painted=...)`) and is removed from the curb-space count.
+435 sides affected; median marking length 5.5 m (corners, hydrants), so the effect is small:
+green 4,423.5 -> 4,421.2 km. The inventory is incomplete: the Tower Trl curb is not in it.

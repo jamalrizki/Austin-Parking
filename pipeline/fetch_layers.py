@@ -121,6 +121,10 @@ CLEARANCE_LAYERS = {
                    "MUTCD_CODE,ASSET_LOCATION_ID", "OBJECTID_1", 10000),
     "signals": (f"{ARCGIS}/TRANSPORTATION_signals2/FeatureServer/0", "SIGNAL_STATUS IN ('TURNED_ON','ON FLASH') AND SIGNAL_TYPE='TRAFFIC'",
                 "SIGNAL_ID,SIGNAL_STATUS", "OBJECTID", 1000),
+    # Red / yellow painted curbs (no parking without a sign), from the pavement-markings inventory.
+    "painted_curbs": (f"{ARCGIS}/Markings_Specialty_Line_Read_Only/FeatureServer/0",
+                      "SPECIALTY_LINE_TYPE='Curbs' AND COLOR IN ('Red','Yellow') AND LOCATION_STATUS='ACTIVE'",
+                      "COLOR,COMMENTS,SEGMENT_ID", "OBJECTID", 500),
 }
 
 

@@ -114,6 +114,12 @@ class SignStretchTest(unittest.TestCase):
         # corner gap of 9 m (< one car + 20 ft corner clearance) is folded into the stretch
         self.assertIsNone(S.sign_stretches([(91.0, "left", NP, "x")], "L", 100.0))
 
+    def test_painted_curb_is_its_own_no_parking_stretch(self):
+        st = S.sign_stretches([], "L", 100.0, [(40.0, 52.0, "Red painted curb")])
+        self.assertEqual([(lo, hi, len(r)) for lo, hi, r, _ in st], [(0.0, 40.0, 0), (40.0, 52.0, 1), (52.0, 100.0, 0)])
+        self.assertEqual(st[1][3], ["Red painted curb"])
+        self.assertEqual(st[1][2][0]["t"], "No Parking")
+
     def test_two_rules_each_where_their_arrows_point(self):
         st = S.sign_stretches([(30.0, "left", NP, "np"), (30.5, "right", PERMIT, "permit")], "L", 120.0)
         self.assertEqual([(r[0]["t"] if r else None) for _, _, r, _ in st], ["No Parking", "Residential Parking Permit"])
