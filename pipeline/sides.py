@@ -11,10 +11,15 @@ Per side, in priority order:
      Only applied where no sign or curb zone says otherwise. Stored as ("X", reason).
   W  no parking signs, but no evidence of physical room: no CTN record / width (W, "nodata"),
      or pavement 24-27 ft with no parking lane listed (W, "tight"), or a collector/arterial/multi-lane
-     road with no listed parking lane (W, "busy"). Shown grey, never green.
+     road with no listed parking lane (W, "busy"), or the city lists a parking lane at one curb
+     only and nothing on record shows it is this side (W, "oneside"). Shown grey, never green.
      Added after Jamal walked La Calma Dr and La Posada Dr (divided, not in CTN, no parking).
   M  median side of a divided road (one-way carriageway, no addresses on that side, the
      opposite carriageway of the same street right beside it) -> not drawn
+
+One deliberate exception to the order above: a side with no car-length gap between driveways
+(X, "driveways") is red even when a sign rule exists for it, because block-wide sign rules were
+being applied to frontage that is all curb cut (104 E 35th St).
 
 Side is left/right relative to the centreline's digitised direction, which is also how
 MapLibre's line-offset works (positive = right), so the browser can draw each side.
@@ -26,7 +31,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from hours import HoursError, parse_human_hours  # noqa: E402
+from hours import HoursError, minute_set, parse_human_hours  # noqa: E402
 from signs import classify  # noqa: E402
 
 RAW = pathlib.Path(__file__).resolve().parent / "raw"
@@ -77,9 +82,20 @@ class Grid:
         return int(x // self.cell), int(y // self.cell)
 
     def add(self, seg, lines):
-        keys = {self.key(p) for line in lines for p in line}
-        for k in keys:
-            self.g.setdefault(k, set()).add(seg)
+        # Register the cells along the whole line, not only at its vertices: a long straight block
+        # has vertices at its ends only, and near() looks just one cell around a point. Samples are
+        # under half a cell apart, so near() finds every line within 0.75 cell of the point.
+        step = self.cell / 2
+        for line in lines:
+            if len(line) == 1:
+                self.g.setdefault(self.key(line[0]), set()).add(seg)
+            for a, b in zip(line, line[1:]):
+                ax, ay = _xy(a)
+                bx, by = _xy(b)
+                n = int(math.hypot(bx - ax, by - ay) // step) + 1
+                for i in range(n + 1):
+                    k = int((ax + (bx - ax) * i / n) // self.cell), int((ay + (by - ay) * i / n) // self.cell)
+                    self.g.setdefault(k, set()).add(seg)
 
     def near(self, p):
         kx, ky = self.key(p)
@@ -163,6 +179,28 @@ def physical(ctn_row):
     if 0 < width < NARROW_FT:
         return False, "narrow", False
     return None, None, False
+
+
+PARK_EDGES = {"P", "BL/P"}
+
+
+def lane_listing(ctn_row):
+    """0 = the city lists no parking lane, 1 = it lists one, 2 = it lists one at ONE curb only
+    (parking edge at one end of the cross-section, travel or bike lane at the other: 621 of the
+    2,797 kept segments with a listed lane).
+
+    The record does not say which side that is. Checked against aerial parked cars (2026-11-09):
+    the cross-section reads in compass order, not in the centreline's direction. On north-south
+    streets the first code is the west curb in 103 of 115 cases; on east-west streets it is
+    inconclusive (63 of 112). Not reliable enough to colour a side, so build_side_info asks for
+    per-side evidence instead."""
+    if not ctn_row or not physical(ctn_row)[2]:
+        return 0
+    det = (ctn_row.get("CROSS_SECTION_DETAIL") or "").upper()
+    edges = [t.strip() for t in det.split("-")] if det and det != "UNMARKED" else []
+    if len(edges) >= 2 and (edges[0] in PARK_EDGES) != (edges[-1] in PARK_EDGES):
+        return 2
+    return 1
 
 
 def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
@@ -265,11 +303,12 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         stats["signs_used"] += 1
 
     medians = median_sides(kept, props, lines) if props else set()
-    room, why, fits, fit_why, car_ok = {}, {}, {}, {}, {}
+    room, why, fits, fit_why, car_ok, one_side = {}, {}, {}, {}, {}, {}
     for seg in kept:
         row = (ctn or {}).get(seg)
         r, reason, has_lane = physical(row)
         room[seg], why[seg] = r, reason
+        one_side[seg] = lane_listing(row) == 2
         width = (row or {}).get("PAVEMENT_WIDTH") or 0
         # Green needs positive evidence that curb parking exists:
         #  - any road: the city lists a parking lane (CTN -OP / P edge / bike lane with parking)
@@ -291,20 +330,56 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
     stats["curb_cut_polygons"] = n_cuts
     # Presence/absence evidence beyond city records.
     osm = osm_evidence(lines, osm_side_fn) if osm_side_fn else {}
-    cars_path = RAW / "curb_cars.json"
+    # Aerial parked-car evidence comes straight from assign.main, never from a curb_cars.json left
+    # over from an earlier build: stale evidence must not survive missing inputs.
+    cars, car_surveys = {}, []
     if any((RAW.parent / "cars" / "out").glob("cars_*.*")):
         sys.path.insert(0, str(RAW.parent / "cars"))
         import assign  # noqa: E402  (pipeline/cars/assign.py)
-        assign.main(lines, widths)
-    cars = {}
-    if cars_path.exists():
-        for k, v in json.loads(cars_path.read_text()).items():
+        per_side, car_surveys = assign.main(lines, widths)
+        for k, v in per_side.items():
             seg, side = k.split("|")
             cars[(seg, side)] = sum(1 for n in v.values() if n > 0)  # number of survey years with cars at this curb
+
+    def sign_says(seg, sd):
+        """'lane' if a curb zone or sign shows parking is regulated (so it exists) on this side,
+        'banned' if its signs forbid parking all week (the usual 'No parking, bike lane' side)."""
+        rules = entries.get((seg, sd), {"rules": ()})["rules"]
+        timed = [r for r in rules if r["t"] == "No Parking" and r["q"] == "ok" and len(minute_set(r["w"])) < 7 * 1440]
+        if (seg, sd) in zone_sides or timed or any(r["t"] != "No Parking" for r in rules):
+            return "lane"  # includes No Parking during set hours: parking is allowed outside them
+        return "banned" if any(r["t"] == "No Parking" and r["q"] == "ok" for r in rules) else None
+
+    def lane_side(seg):
+        """Sides ('L', 'R', 'LR' or '') that hold the parking lane on a block where the city lists
+        one at a single curb. City records settle it first: a curb zone or regulating sign on a
+        side, or all-week No Parking signs on one side only (the lane is then at the other curb).
+        Failing that, the side where parked cars were seen in more aerial surveys than the other;
+        a tie settles nothing unless both sides pass the usual 2-survey test on their own."""
+        says = {sd: sign_says(seg, sd) for sd in ("L", "R")}
+        strong = "".join(sd for sd in ("L", "R") if says[sd] == "lane")
+        if strong:
+            return strong
+        banned = [sd for sd in ("L", "R") if says[sd] == "banned"]
+        if banned:
+            return "" if len(banned) == 2 else "R" if banned[0] == "L" else "L"
+        n = {sd: cars.get((seg, sd), 0) if car_ok[seg] else 0 for sd in ("L", "R")}
+        if n["L"] != n["R"]:
+            return "L" if n["L"] > n["R"] else "R"
+        return "LR" if n["L"] >= 2 else ""
+
+    stats["one_sided_lane_segments"] = sum(1 for v in one_side.values() if v)
     evidence = {}
     out = {}
     for seg in kept:
         for side in ("L", "R"):
+            osm_yes = osm.get((seg, side)) == "yes"
+            if one_side[seg]:
+                # The listed lane is at one curb and the other has a travel or bike lane, so neither
+                # the lane nor the street's width is evidence for a side until something says which.
+                has_evidence = osm_yes or side in lane_side(seg)
+            else:
+                has_evidence = fits.get(seg) or osm_yes or (car_ok[seg] and cars.get((seg, side), 0) >= 2)
             if (seg, side) in medians:
                 out[(seg, side)] = "M"
             elif (seg, side) in zone_sides:
@@ -320,13 +395,13 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
                 out[(seg, side)] = ("X", "osm")
             elif seg not in surveyed:
                 out[(seg, side)] = "U"
-            elif not (fits.get(seg) or osm.get((seg, side)) == "yes" or (car_ok[seg] and cars.get((seg, side), 0) >= 2)):
-                out[(seg, side)] = ("W", fit_why[seg])
+            elif not has_evidence:
+                out[(seg, side)] = ("W", "oneside" if one_side[seg] else fit_why[seg])
             elif (seg, side) in entries:
                 out[(seg, side)] = entries[(seg, side)]
             else:
                 out[(seg, side)] = "N"
-            ev = (1 if osm.get((seg, side)) == "yes" else 0) | (min(cars.get((seg, side), 0), 3) << 1)
+            ev = (1 if osm_yes else 0) | (min(cars.get((seg, side), 0), 3) << 1)
             if ev:
                 evidence[(seg, side)] = ev
     years = sorted(datetime.datetime.fromtimestamp(t / 1000, datetime.timezone.utc).year for t in survey_dates)
@@ -335,6 +410,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
     stats["evidence"] = evidence
     stats["osm_sides"] = len(osm)
     stats["car_sides"] = len(cars)
+    stats["car_surveys"] = car_surveys
     return out, stats
 
 
@@ -360,15 +436,20 @@ def _pieces(lines):
 
 
 def _project(x, y, pieces):
-    """(along_m, dist_m, side, clamped) of a metric point on the polyline."""
+    """(along_m, dist_m, side, clamped, piece) of a metric point on the polyline.
+    clamped: the point lies beyond one of the polyline's two ends. A point on the outside of a
+    bend between two pieces is not clamped. piece: the nearest piece, which gives the street's
+    direction at the point."""
     best = None
-    for ax, ay, dx, dy, L, s0 in pieces:
+    last = len(pieces) - 1
+    for i, q in enumerate(pieces):
+        ax, ay, dx, dy, L, s0 = q
         t = ((x - ax) * dx + (y - ay) * dy) / (L * L)
         tc = max(0.0, min(1.0, t))
         d = math.hypot(x - ax - tc * dx, y - ay - tc * dy)
         if best is None or d < best[1]:
             side = "L" if dx * (y - ay) - dy * (x - ax) > 0 else "R"
-            best = (s0 + tc * L, d, side, t < 0 or t > 1)
+            best = (s0 + tc * L, d, side, (t < 0 and i == 0) or (t > 1 and i == last), q)
     return best
 
 
@@ -398,7 +479,7 @@ def curb_spaces(lines, widths, path):
                 reach, touch = half + 6.0, half + 3.0
                 by_side = {}
                 for x, y in pts:
-                    s, d, side, clamped = _project(x, y, pieces)
+                    s, d, side, clamped, _ = _project(x, y, pieces)
                     if d <= reach and not clamped:
                         by_side.setdefault(side, []).append((s, d))
                 for side, v in by_side.items():
@@ -455,16 +536,14 @@ def osm_evidence(lines, osm_side_fn):
             for s in grid.near(mid):
                 if not geo[s]:
                     continue
-                along, d, _, clamped = _project(*_xy(mid), geo[s])
+                along, d, _, clamped, q = _project(*_xy(mid), geo[s])
                 if d < 8 and not clamped and (best is None or d < best[0]):
-                    best = (d, s)
+                    best = (d, s, q)
             if not best:
                 continue
-            s = best[1]
-            # direction of our segment piece nearest the midpoint
-            mx, my = _xy(mid)
-            px, py, pdx, pdy, _, _ = min(geo[s], key=lambda q: abs((mx - q[0]) * q[3] - (my - q[1]) * q[2]) / q[4])
-            same = (bx - ax) * pdx + (by - ay) * pdy >= 0
+            s, q = best[1], best[2]
+            # q is our segment's piece nearest the midpoint: its direction decides left/right
+            same = (bx - ax) * q[2] + (by - ay) * q[3] >= 0
             for sd, r in sides.items():
                 if not r or r["v"] == "unknown":
                     continue

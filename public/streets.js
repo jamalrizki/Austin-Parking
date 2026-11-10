@@ -1,8 +1,9 @@
 // Decode the compact street file written by pipeline/build_segments.py (pack_streets).
 // Format v8:
 //   {"v":8,"s":1e5,"o":[x0,y0],"n":[names],"m":[sign messages],"r":[rules],"e":[side entries],
-//    "sy":[first, median, last survey year],
-//    "f":[[name_i, hundred_block, left, right, pavement_ft(-1 unknown), parking_lane(0/1),
+//    "sy":[first, median, last survey year], "cs":[aerial surveys used for parked-car evidence],
+//    "f":[[name_i, hundred_block, left, right, pavement_ft(-1 unknown),
+//          parking_lane(0 none listed / 1 listed / 2 listed at one curb only, side not recorded),
 //          spaces_left, spaces_right (car-length curb gaps between driveways, -1 unknown),
 //          evidence_left, evidence_right (bit0 OSM parking lane; bits1-2 aerial survey years with parked cars), part...]]}
 // left/right: -1 city curb zones cover this side (drawn from segments.json instead)
@@ -14,6 +15,7 @@
 //             -10 no car-length gap between driveways/lots and corner clearance
 //             -11 collector/arterial/multi-lane road with no evidence that curb parking exists
 //             -12 OpenStreetMap contributors mapped no parking on this side
+//             -13 the city lists a parking lane at one curb only and nothing shows it is this side
 //             >=0 index into e: [[rule_i...], [message_i...]]
 // Parts are flat int deltas chained across the whole file.
 export const SIDE_ZONES = -1, SIDE_NO_SIGNS = -2, SIDE_NO_RECORDS = -3, SIDE_MEDIAN = -4;
@@ -40,7 +42,7 @@ export function decodeStreets(d) {
     const props = { k: "c", st: d.n[row[0]], src: "signs", L: row[2], R: row[3] };
     if (row[1] >= 0) props.blk = `${row[1] * 100} block`;
     if (row[4] > 0) props.w = row[4];
-    if (row[5]) props.pk = 1;
+    if (row[5]) props.pk = row[5];
     props.spL = row[6];
     props.spR = row[7];
     props.evL = row[8];
@@ -51,7 +53,7 @@ export function decodeStreets(d) {
   }
   return {
     fc: { type: "FeatureCollection", features },
-    tables: { messages: d.m, rules: d.r, entries: d.e, surveyYears: d.sy },
+    tables: { messages: d.m, rules: d.r, entries: d.e, surveyYears: d.sy, carSurveys: d.cs || [] },
     withRules,
   };
 }

@@ -40,6 +40,9 @@ jobs:
       - name: Rule-engine tests
         run: node --test tests/engine.test.mjs
 
+      - name: Pipeline tests
+        run: python3 -m unittest discover -s tests
+
       - name: Commit refreshed data if changed
         if: github.event_name != 'push'
         run: |

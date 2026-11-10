@@ -64,7 +64,7 @@ map.on("load", async () => {
                "line-width": width(2.6), "line-offset": sideOffset(dir),
                "line-opacity": ["case", ["in", code, ["literal", [-5, -6, -7, -10, -12]]], 0.55,
                  ["boolean", ["feature-state", `${S}d`], false], 0.18, 0.9] } });
-    map.addLayer({ id: `side-${S}-none`, type: "line", source: "streets", minzoom: 12, filter: ["in", code, ["literal", [-3, -8, -9, -11]]],
+    map.addLayer({ id: `side-${S}-none`, type: "line", source: "streets", minzoom: 12, filter: ["in", code, ["literal", [-3, -8, -9, -11, -13]]],
       layout: { "line-cap": "butt" },
       paint: { "line-color": "#a3abb8", "line-width": 1.6, "line-offset": sideOffset(dir), "line-opacity": 0.7, "line-dasharray": [1.5, 1.5] } });
   }
@@ -171,10 +171,12 @@ function openCard(src, id, side) {
   }
   if (src === "streets") {
     if (p.w) rows.push(["Pavement width", `${p.w} ft`]);
-    if (p.pk) rows.push(["Parking lane", "Yes, per city street data"]);
+    if (p.pk) rows.push(["Parking lane", p.pk === 2 ? "On one side of this block only; city street data doesn't say which" : "Yes, per city street data"]);
     const ev = side === "L" ? p.evL : p.evR;
     if (ev & 1) rows.push(["OpenStreetMap", "Parking lane mapped by contributors"]);
-    if (ev >> 1) rows.push(["Aerial photos", `Cars seen parked at this curb in ${ev >> 1} of 3 surveys (2019, 2020, 2023)`]);
+    // Survey names carry their year (city2023, sm2019); older data files don't list them.
+    const years = state.streets.tables.carSurveys.map((s) => (s.match(/\d{4}/) || [s])[0]).sort();
+    if (ev >> 1) rows.push(["Aerial photos", `Cars seen parked at this curb in ${ev >> 1}${years.length ? ` of ${years.length} surveys (${years.join(", ")})` : " aerial surveys"}`]);
     const sp = side === "L" ? p.spL : p.spR;
     if (sp > 0 && r.color !== "grey") rows.push(["Curb space", `Room for about ${sp >= 99 ? "99+" : sp} car${sp === 1 ? "" : "s"} between driveways (city aerial survey)`]);
   }

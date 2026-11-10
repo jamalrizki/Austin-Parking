@@ -175,6 +175,10 @@ export function evaluateSide(code, tables, types, t, street = {}) {
     return { color: "grey", title: "Parking not confirmed", until: null, freeMins: 0, signs: [],
       reason: "This is a collector or arterial road. No city parking zone, parking sign, or listed parking lane shows that curb parking exists here, so the map won't call it free." };
   }
+  if (code === -13) {
+    return { color: "grey", title: "Parking not confirmed", until: null, freeMins: 0, signs: [],
+      reason: "The city's street data lists a parking lane on only one side of this block and doesn't say which. No curb zone, sign, or aerial photo settles that it is this side, so the map won't call it free." };
+  }
   if (code === -8 || code === -9) {
     return { color: "grey", title: "Room to park unconfirmed", until: null, freeMins: 0, signs: [],
       reason: (code === -8

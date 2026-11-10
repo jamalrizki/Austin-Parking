@@ -21,6 +21,7 @@ This project builds that inventory from public data instead. Every street side i
 | City curb zone (meter, permit, loading, etc.) | Coloured by that zone's rules and hours |
 | Posted parking sign in the city's sign inventory | Coloured by the sign's rules |
 | City lists a parking lane on that street (Transportation Network) | Parking exists |
+| City lists a parking lane at one curb only (it doesn't record which) | Parking exists on the side a curb zone, a sign, or aerial photos point to; otherwise both sides stay grey |
 | Wide local residential street (28 ft+, 2 lanes or fewer) | Parking exists |
 | OpenStreetMap tags a parking lane on that side | Parking exists |
 | **Parked cars seen at that curb in 2 or more aerial surveys** | Parking exists (local streets and collectors only) |
@@ -36,9 +37,9 @@ To fill gaps where the city has no records, we look for parked cars in public ae
   - City of Austin 2023 aerials (~15 cm per pixel)
   - TxGIO StratMap 2020 (7.6 cm, downsampled to 15 cm to match the model)
   - TxGIO StratMap 2019 (15 cm)
-- **Coverage.** Only image tiles that contain streets are processed: 26,852 tiles per survey, about 550,000 vehicles found across the 2023 and 2020 surveys.
+- **Coverage.** Only image tiles that contain streets are processed: 26,852 tiles per survey, about 850,000 vehicles found across the three surveys (confidence 0.5 or higher, repeats removed); about 170,000 of them are parked at a curb.
 - **Parked vs. moving.** A photo can't show motion, so this is decided by pattern, not per car:
-  1. The car must be on the paved road (using the city's paved-road outlines, traced from the same imagery), at least 8 m from an intersection.
+  1. The car must be on the paved road (using the city's paved-road outlines, traced from the same imagery), at least 8 m from an intersection. The same car reported twice (detections under 1.5 m apart) counts once.
   2. Parked cars sit close to the edge of the road: we measured a median of 1.2 m for parked cars against 2.8 m for moving traffic. Only cars within 1.6 m of the edge count.
   3. A survey counts for a side only if at least 2 cars hug the curb there, and they outnumber cars further out in the lane by 2 to 1.
   4. At least **2 of the 3 surveys**, taken in different years, must agree.

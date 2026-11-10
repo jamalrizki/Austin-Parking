@@ -268,3 +268,74 @@ Austin publishes no geolocated parking-citation data on its open-data portal (ch
   anything not 6/8/9) are now excluded from car evidence; they need a listed parking lane or OSM.
 - None of the walked no-parking streets (La Calma, La Posada, Camino La Costa, Cameron Rd near
   Anderson, Norwood Park Blvd) gained green.
+
+## 2026-11-09: code review fixes (take effect at the next rebuild)
+
+Measured on a 4 x 4 km sample (St. John's / Windsor Park: 1,059 segments, 35,233 detections) unless
+marked citywide. Old vs new code on the sample: 7 of 2,118 sides change, all green -> grey.
+
+- **Parking lane listed at one curb only.** Citywide, 621 of the 2,797 kept segments with a listed
+  lane have the `P` edge at one end of `CROSS_SECTION_DETAIL` and a travel/bike lane at the other
+  (`P…BL` 167, `BL…P` 146, `OW…P` 120, `T…P` 45, `CTT…P` 44). Both sides used to count as having
+  the lane. The string's order was tested against aerial cars: it is compass order, not the
+  centreline's direction. On north-south streets the first code is the west curb in 103 of 115
+  cases; on east-west streets it is inconclusive (63 of 112). Not used. Instead, per side: a curb
+  zone or regulating sign on that side, or all-week No Parking signs on the other side only, or
+  parked cars in more aerial surveys than the other side. Otherwise grey, code -13. Street width
+  is not evidence on these blocks. `parking_lane` in streets.json is now 0 / 1 / 2 (2 = one curb).
+- **Duplicate detections.** 2-3% of detections lie within 1.5 m of another (tile overlaps; the
+  merge's 1 m rounding misses pairs that straddle a rounding boundary). One car counted twice could
+  meet the 2-car rule: Hermitage Dr seg 2040132 was green from that alone. `assign.py` now drops
+  repeats, keeping the most confident.
+- **Spatial index.** `sides.Grid` registered only a line's vertices, so the middle of a long
+  straight block was invisible to lookups: 2.5% of detections were dropped and mid-block driveways
+  went unmatched (curb-space counts corrected on 130 of 2,118 sides, 4,421 -> 3,700 spaces).
+- **Street direction on curves.** The piece of a segment used for a car's (or OSM way's) direction
+  was chosen by distance to its infinite line: 7% of cars were measured across a line 20-90 degrees
+  off. Now the nearest piece. Points on the outside of a bend are no longer treated as beyond the
+  segment's end.
+- **Silent loss of evidence.** The build no longer reads a leftover `curb_cars.json`; `assign.py`
+  stops with an error if detections exist but `roads.jsonl` is missing; `validate.py` requires
+  >= 1,500 sides with cars in 2+ surveys (2,843 today) and fails if any block in
+  `rules/never_green.json` (the walked no-parking streets) is always-green.
+- Checked and left alone: the 40 m limit on the on-pavement parity test (9 of 5,264 accepted cars
+  were off the pavement, 1 of them counted as hugging the curb).
+- Not changed, worth a look: `median_sides` accepts a carriageway that lies beyond the segment's
+  end (17 of 124 median sides in the sample, upper bound). 802 always-green sides in the sample
+  rest on "local street, 28 ft+" alone; 472 of them had no passing car survey.
+
+## 2026-11-09: other sources found (not yet used)
+
+From the city's ArcGIS directory (services.arcgis.com/0L95CJ0VTaxqcmED, 2,212 services) and the
+city/state image servers:
+
+- **More aerial years, same 0.5 ft resolution, same fast city server as 2023:**
+  `AerialMosaics/Aerials2017`, `2018`, `2019`, `2021`, `2025` (maps.austintexas.gov/image). TxGIO
+  also has `StratMap21_NCCIR_CapArea_Brazos_Kerr` (Jan 2021, 15 cm). With 2019/2020/2023 that
+  makes up to 7 survey years. The evidence bits in streets.json hold 0-3 surveys only; more years
+  need a wider field and a rule expressed as a share of surveys.
+- **Painted parking markings:** `Markings_Specialty_Point_Read_Only`, SPECIALTY_POINT_TYPE = 5
+  (Parking): 3,593 points (stall lines 1,739, "L" 1,290, "T" 492, handicap 51), each with
+  SEGMENT_ID and a point location, so the side is known. 399 segments; 154 of them (1,128
+  markings) have no city curb zone. Note the field's coded-value domain mislabels 4 as Parking;
+  the subtype table is right (4 = Other: crosshatch, green bike pads; 5 = Parking).
+- Listed but not yet examined: `Parking_Inventory` (vs the `_FME_UPDATE_view` in use),
+  `On_Street_Parking_SXSW24`, `Parking_Lot_Entrances_and_Exits`, `TRANSPORTATION_bicycle_facilities`,
+  `Transit_Bus_Stops_(Moped)_Public_View`, `2026_All_Hydrants_Map_WFL1` (15 ft hydrant rule),
+  type-4 "Diagonal crosshatch" markings (painted no-parking areas).
+
+## 2026-11-10: sm2019 complete; citywide rebuild with the review fixes
+
+- All three surveys complete (26,852 tiles each; the 44 tiles that failed in a state-server outage
+  were retried). Compact files, conf >= 0.5: sm2020 195,556 and sm2019 327,480 vehicles (the larger
+  counts in run.log are the old merge, which kept every confidence). After removing repeats,
+  852,295 detections; 169,760 curb-parked.
+- Sides by number of surveys with parked cars: 0: 44,043; 1: 8,689; 2: 3,563; 3: 2,187.
+- Changes vs the previous build (row by row): 226 sides turned green, 224 of them from parked cars
+  now seen in 2+ surveys (mostly -11 collectors, also -9/-8). 161 lost green: 152 to the new
+  "lane at one curb only" rule (-13; 158 sides in total), 6 to -11 (a repeated detection or a
+  re-measured side lost its second survey), the rest to driveways/width codes.
+- Spot check: 12 random newly green sides against the city's 2023 and 2025 aerials. 10 show cars
+  parked along that curb; Wycliff Ln 12400 (42 ft collector, cars in 2019 + 2020, none since) and
+  Crawford Ave 3700 east side (by a traffic island; parked-looking row in 2025) are plausible. None
+  contradicted. None of the walked no-parking streets is green (validate.py checks this now).

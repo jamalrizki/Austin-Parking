@@ -270,13 +270,12 @@ def build_centerline(excl, covered, pay_areas):
     sides, stats = build_side_info(kept, pay_areas, kept_props, ctn, osm_side)
     spaces = stats.pop("spaces")
     evidence = stats.pop("evidence")
-    from sides import physical
+    from sides import lane_listing
     for seg in kept:
         row = ctn.get(seg) or {}
         w = row.get("PAVEMENT_WIDTH")
-        _, _, has_lane = physical(row)
         kept_props[seg]["_w"] = int(w) if w else -1
-        kept_props[seg]["_pk"] = 1 if has_lane else 0
+        kept_props[seg]["_pk"] = lane_listing(row)
     stats["outside_city_limits"] = outside
     for f in feats:
         seg = f["properties"]["seg"]
@@ -348,11 +347,12 @@ def build_osm(excl, zone_index):
     return feats, skipped_near_city, raw.get("osm_base_timestamp")
 
 
-def pack_streets(feats, survey_years):
+def pack_streets(feats, survey_years, car_surveys=()):
     """Compact street format, decoded in public/streets.js.
-    {"v":5, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
-     "sy":[first, median, last survey year],
-     "f":[[name_i, hundred_block(-1 = none), left, right, pavement_ft(-1 = unknown), parking_lane(0/1),
+    {"v":8, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
+     "sy":[first, median, last survey year], "cs":[aerial surveys used for parked-car evidence],
+     "f":[[name_i, hundred_block(-1 = none), left, right, pavement_ft(-1 = unknown),
+            parking_lane(0 none listed / 1 listed / 2 listed at one curb only, side not recorded),
             spaces_left, spaces_right (car-length curb gaps between driveways, -1 unknown),
             evidence_left, evidence_right (bit0 OSM parking lane mapped; bits1-2 aerial survey years with
             cars parked at this curb, 0-3), part...], ...]}
@@ -363,6 +363,7 @@ def pack_streets(feats, survey_years):
                 -10 no car-length gap between driveways/lots and corners,
                 -11 collector/arterial/multi-lane road with no sign, zone or listed parking lane showing parking,
                 -12 OpenStreetMap contributors mapped no parking on this side,
+                -13 the city lists a parking lane at one curb only and nothing shows it is this side,
                 >=0 index into e.
     e[i] = [[rule_i...], [message_i...]];  r[j] = {"t","w","q","tl"?,"note"?}
     Parts are flat int coordinate deltas chained across the file (features sorted spatially)."""
@@ -371,7 +372,8 @@ def pack_streets(feats, survey_years):
     msgs, msg_i, rules, rule_i, ents, ent_i = [], {}, [], {}, [], {}
     ox, oy = -97.95, 30.08
     CODE = {"Z": -1, "N": -2, "U": -3, "M": -4}
-    NO_ROOM = {"lane": -5, "bike": -6, "narrow": -7, "tight": -8, "nodata": -9, "driveways": -10, "busy": -11, "osm": -12}
+    NO_ROOM = {"lane": -5, "bike": -6, "narrow": -7, "tight": -8, "nodata": -9, "driveways": -10, "busy": -11, "osm": -12,
+               "oneside": -13}
 
     def intern(lst, idx, key, val):
         i = idx.get(key)
@@ -412,7 +414,8 @@ def pack_streets(feats, survey_years):
                 px, py = ix, iy
             row.append(flat)
         out.append(row)
-    return {"v": 8, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years, "f": out}
+    return {"v": 8, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years,
+            "cs": list(car_surveys), "f": out}
 
 
 def write(path, obj):
@@ -441,7 +444,7 @@ def main():
           # Austin's streets, and a second, unofficial source only produced conflicts.
           "features": zones}
     write(OUT / "segments.json", fc)
-    write(OUT / "streets.json", pack_streets(centre, side_stats["survey_years"]))
+    write(OUT / "streets.json", pack_streets(centre, side_stats["survey_years"], side_stats["car_surveys"]))
     areas = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": f["geometry"]["type"], "coordinates": rnd(f["geometry"]["coordinates"])},
          "properties": {"name": f["properties"].get("AREA_NAME"), "hours": f["properties"].get("OP_HOURS")}}

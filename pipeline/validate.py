@@ -26,6 +26,19 @@ if streets.get("v") != 8:
 unknown_sides = sum((r[2] == -3) + (r[3] == -3) for r in streets["f"])
 if unknown_sides / max(1, 2 * len(streets["f"])) > 0.10:
     errors.append(f"{unknown_sides} street sides have no sign records (>10%); sign fetch may be incomplete")
+# Aerial parked-car evidence disappears without an error if the stored detections or the road
+# outlines are missing, and every side that relied on it would quietly change colour.
+MIN_CAR_SIDES = 1500  # sides with parked cars in 2+ surveys: 2,843 on 2026-11-09 with two surveys
+car_sides = sum(((r[8] >> 1) >= 2) + ((r[9] >> 1) >= 2) for r in streets["f"])
+if car_sides < MIN_CAR_SIDES:
+    errors.append(f"only {car_sides} street sides have aerial parked-car evidence (expected >= {MIN_CAR_SIDES}); "
+                  "pipeline/cars/out or pipeline/raw/roads.jsonl may be missing")
+# Blocks known from the ground to have no parking must never be shown as always-free.
+never = json.loads((ROOT / "rules" / "never_green.json").read_text())["streets"]
+for r in streets["f"]:
+    for w in never:
+        if streets["n"][r[0]] == w["st"] and w.get("blk", r[1]) == r[1] and -2 in (r[2], r[3]):
+            errors.append(f"{w['st']} {r[1] * 100 if r[1] >= 0 else ''} block has an always-green side, but: {w['why']}")
 if len(streets.get("m", [])) < 500 or len(streets.get("e", [])) < 500:
     errors.append("too few sign messages/entries in streets.json; sign fetch may be incomplete")
 if len(streets["f"]) < MIN_STREETS:

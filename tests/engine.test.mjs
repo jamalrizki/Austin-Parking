@@ -161,11 +161,16 @@ test("real data: streets decode; sides follow the sign records", { skip: !exists
     const c = evaluateSide(code, tables, types, T(9, 12)).color;
     if (code === -3) assert.equal(c, "grey", "no-records side must be grey");
     if (code === -2) assert.equal(c, "green", "no-parking-signs side is green");
-    if (code === -8 || code === -9 || code === -11) assert.equal(c, "grey", "unconfirmed side must be grey");
+    if (code === -8 || code === -9 || code === -11 || code === -13) assert.equal(c, "grey", "unconfirmed side must be grey");
     // green needs positive evidence: listed parking lane, wide local street, OSM parking lane, or
-    // parked cars at this curb in >= 2 aerial surveys (evidence bits: 0 OSM, 1-2 survey count)
+    // parked cars at this curb in >= 2 aerial surveys (evidence bits: 0 OSM, 1-2 survey count).
+    // Where the city lists a lane at one curb only (pk 2), neither the lane nor the width counts:
+    // the side needs OSM, parked cars in at least one survey, or sign rules on the other side
+    // (all-week No Parking there puts the lane on this side).
     const ev = f.properties["ev" + S] || 0;
-    if (code === -2) assert.ok(f.properties.pk || f.properties.w >= 28 || (ev & 1) || ((ev >> 1) & 3) >= 2,
+    const cars = (ev >> 1) & 3;
+    const otherSigned = f.properties[S === "L" ? "R" : "L"] >= 0;
+    if (code === -2) assert.ok(f.properties.pk === 2 ? (ev & 1) || cars >= 1 || otherSigned : f.properties.pk || f.properties.w >= 28 || (ev & 1) || cars >= 2,
       `${f.properties.st} green without room evidence`);
     counts[c] = (counts[c] || 0) + 1;
   }
@@ -204,7 +209,7 @@ test("sign rules: no-parking sign with hours, permit sign, time limit, unknown",
   assert.equal(evaluateSide(-2, tables, types, noon).color, "green");
   assert.equal(evaluateSide(-3, tables, types, noon).color, "grey");
   for (const code of [-5, -6, -7, -10, -12]) assert.equal(evaluateSide(code, tables, types, noon).color, "red");
-  for (const code of [-8, -9, -11]) assert.equal(evaluateSide(code, tables, types, noon).color, "grey");
+  for (const code of [-8, -9, -11, -13]) assert.equal(evaluateSide(code, tables, types, noon).color, "grey");
   assert.match(evaluateSide(-2, tables, types, noon, { w: 25 }).caveat, /Narrow/);
   assert.equal(evaluateSide(-2, tables, types, noon, { w: 25, pk: 1 }).caveat, null);
 });

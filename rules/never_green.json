@@ -1,0 +1,10 @@
+{
+  "_doc": "Blocks checked on foot or against imagery and found to have NO curb parking. pipeline/validate.py fails the build if any side of them is always-green (code -2: 'no parking signs, parking exists'). Names as they appear on the map; blk is the hundred block (78 = 7800 block), omitted = the whole street. See tests/spot-checks.md and pipeline/DATA_NOTES.md.",
+  "streets": [
+    {"st": "La Calma Dr", "why": "walked 2026-11-08: divided road, no space at either curb"},
+    {"st": "La Posada Dr", "why": "walked 2026-11-08: divided road, no space at either curb"},
+    {"st": "Camino La Costa", "why": "walked 2026-11-08: traffic in the curb lane, no parking"},
+    {"st": "Norwood Park Blvd", "why": "reported 2026-11-08: wide from extra travel lanes, no parking"},
+    {"st": "Cameron Rd", "blk": 78, "why": "2023 imagery, 2026-11-09: 5-lane arterial; the parked cars were in an adjacent lot"}
+  ]
+}
