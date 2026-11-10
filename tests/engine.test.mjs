@@ -165,12 +165,15 @@ test("real data: streets decode; sides follow the sign records", { skip: !exists
     // green needs positive evidence: listed parking lane, wide local street, OSM parking lane, or
     // parked cars at this curb in >= 2 aerial surveys (evidence bits: 0 OSM, 1-2 survey count).
     // Where the city lists a lane at one curb only (pk 2), neither the lane nor the width counts:
-    // the side needs OSM, parked cars in at least one survey, or sign rules on the other side
-    // (all-week No Parking there puts the lane on this side).
+    // the side needs OSM, painted spaces, parked cars in at least one survey, or sign rules on the
+    // other side (all-week No Parking there puts the lane on this side; on a split block that
+    // other side's code is per stretch, so pieces are accepted).
     const ev = f.properties["ev" + S] || 0;
     const cars = (ev >> 1) & 3;
-    const otherSigned = f.properties[S === "L" ? "R" : "L"] >= 0;
-    if (code === -2) assert.ok(f.properties.pk === 2 ? (ev & 1) || cars >= 1 || otherSigned : f.properties.pk || f.properties.w >= 28 || (ev & 1) || cars >= 2,
+    const marked = ev & 8;
+    const otherSigned = f.properties[S === "L" ? "R" : "L"] >= 0 || f.properties.pc;
+    if (code === -2) assert.ok(f.properties.pk === 2 ? (ev & 1) || marked || cars >= 1 || otherSigned
+      : f.properties.pk || f.properties.w >= 28 || (ev & 1) || marked || cars >= 2,
       `${f.properties.st} green without room evidence`);
     counts[c] = (counts[c] || 0) + 1;
   }

@@ -74,5 +74,62 @@ class LaneListingTest(unittest.TestCase):
         self.assertEqual(S.lane_listing(None), 0)
 
 
+NP = {"t": "No Parking", "w": [[d, 0, 1440] for d in range(7)], "q": "ok"}
+PERMIT = {"t": "Residential Parking Permit", "w": [[d, 1080, 1920] for d in range(7)], "q": "ok"}
+
+
+class SignStretchTest(unittest.TestCase):
+    def test_arrow_wording(self):
+        from signs import arrow
+        self.assertEqual(arrow("NO PARKING SYMBOL LEFT ARROW"), "left")
+        self.assertEqual(arrow("PAY TO PARK RIGHT ARROW"), "right")
+        self.assertEqual(arrow("NO PARKING BIKE LANE DOUBLE ARROW"), "both")
+        self.assertEqual(arrow("NO PARKING BOTH ARROWS TOW-AWAY ZONE"), "both")
+        self.assertIsNone(arrow("NO PARKING IN BIKE LANE"))
+
+    def test_left_side_right_arrow_points_forward(self):
+        # 100 m block, left side: RIGHT arrow at 80 m covers 80..100 (to the corner); the rest is open.
+        st = S.sign_stretches([(80.0, "right", NP, "NO PARKING RIGHT ARROW")], "L", 100.0)
+        self.assertEqual([(lo, hi, len(r)) for lo, hi, r, _ in st], [(0.0, 80.0, 0), (80.0, 100.0, 1)])
+        self.assertEqual(st[0][3], [])
+        self.assertEqual(st[1][3], ["NO PARKING RIGHT ARROW"])
+
+    def test_right_side_mirrors(self):
+        st = S.sign_stretches([(80.0, "right", NP, "m")], "R", 100.0)
+        self.assertEqual([(lo, hi, len(r)) for lo, hi, r, _ in st], [(0.0, 80.0, 1), (80.0, 100.0, 0)])
+
+    def test_paired_signs_bound_a_stretch(self):
+        # left side: RIGHT arrow (forward) at 20 starts it, LEFT arrow (back) at 60 ends it
+        st = S.sign_stretches([(20.0, "right", NP, "a"), (60.0, "left", NP, "b"), (40.0, "both", NP, "c")], "L", 150.0)
+        self.assertEqual([(lo, hi, len(r)) for lo, hi, r, _ in st], [(0.0, 20.0, 0), (20.0, 60.0, 1), (60.0, 150.0, 0)])
+
+    def test_no_arrow_or_unclosed_double_covers_the_whole_side(self):
+        self.assertIsNone(S.sign_stretches([(50.0, None, NP, "NO PARKING ANY TIME")], "L", 100.0))
+        self.assertIsNone(S.sign_stretches([(50.0, "both", NP, "x")], "L", 100.0))
+
+    def test_arrow_and_plain_sign_at_the_same_spot(self):
+        self.assertIsNone(S.sign_stretches([(50.0, "left", NP, "a"), (50.0, None, NP, "b")], "L", 100.0))
+
+    def test_short_gap_is_not_left_open(self):
+        # corner gap of 9 m (< one car + 20 ft corner clearance) is folded into the stretch
+        self.assertIsNone(S.sign_stretches([(91.0, "left", NP, "x")], "L", 100.0))
+
+    def test_two_rules_each_where_their_arrows_point(self):
+        st = S.sign_stretches([(30.0, "left", NP, "np"), (30.5, "right", PERMIT, "permit")], "L", 120.0)
+        self.assertEqual([(r[0]["t"] if r else None) for _, _, r, _ in st], ["No Parking", "Residential Parking Permit"])
+
+
+class CutLinesTest(unittest.TestCase):
+    def test_cut_middle_of_a_bent_line(self):
+        line = [pt(0, 0), pt(100, 0), pt(100, 100)]
+        parts = S.cut_lines([line], 50, 150)
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(len(parts[0]), 3)  # start, the bend, end
+        (sx, sy), (ex, ey) = S._xy(parts[0][0]), S._xy(parts[0][-1])
+        ox, oy = S._xy(pt(0, 0))
+        self.assertAlmostEqual(sx - ox, 50, delta=0.05)
+        self.assertAlmostEqual(ey - oy, 50, delta=0.05)
+
+
 if __name__ == "__main__":
     unittest.main()

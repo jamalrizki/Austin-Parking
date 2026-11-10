@@ -1,11 +1,12 @@
 // Decode the compact street file written by pipeline/build_segments.py (pack_streets).
-// Format v8:
+// Format v9:
 //   {"v":8,"s":1e5,"o":[x0,y0],"n":[names],"m":[sign messages],"r":[rules],"e":[side entries],
 //    "sy":[first, median, last survey year], "cs":[aerial surveys used for parked-car evidence],
 //    "f":[[name_i, hundred_block, left, right, pavement_ft(-1 unknown),
 //          parking_lane(0 none listed / 1 listed / 2 listed at one curb only, side not recorded),
 //          spaces_left, spaces_right (car-length curb gaps between driveways, -1 unknown),
-//          evidence_left, evidence_right (bit0 OSM parking lane; bits1-2 aerial survey years with parked cars), part...]]}
+//          evidence_left, evidence_right (bit0 OSM parking lane; bits1-2 aerial survey years with parked cars;
+//          bit3 painted parking spaces), piece (1 = one stretch of a block split where sign arrows end), part...]]}
 // left/right: -1 city curb zones cover this side (drawn from segments.json instead)
 //             -2 city sign survey covered the block and recorded no parking signs on this side
 //             -3 no city sign records
@@ -22,7 +23,7 @@ export const SIDE_ZONES = -1, SIDE_NO_SIGNS = -2, SIDE_NO_RECORDS = -3, SIDE_MED
 export const SIDE_NO_ROOM = [-5, -6, -7, -10, -12];
 
 export function decodeStreets(d) {
-  if (d.v !== 8) throw new Error(`unknown streets format ${d.v}`);
+  if (d.v !== 9) throw new Error(`unknown streets format ${d.v}`);
   const S = d.s;
   let px = Math.round(d.o[0] * S), py = Math.round(d.o[1] * S);
   const features = new Array(d.f.length);
@@ -30,7 +31,7 @@ export function decodeStreets(d) {
   for (let i = 0; i < d.f.length; i++) {
     const row = d.f[i];
     const parts = [];
-    for (let j = 10; j < row.length; j++) {
+    for (let j = 11; j < row.length; j++) {
       const flat = row[j];
       const line = new Array(flat.length / 2);
       for (let k = 0; k < flat.length; k += 2) {
@@ -47,6 +48,7 @@ export function decodeStreets(d) {
     props.spR = row[7];
     props.evL = row[8];
     props.evR = row[9];
+    if (row[10]) props.pc = 1;
     if (row[2] >= 0 || row[3] >= 0) withRules.push(i);
     features[i] = { type: "Feature", id: i, properties: props,
       geometry: parts.length === 1 ? { type: "LineString", coordinates: parts[0] } : { type: "MultiLineString", coordinates: parts } };

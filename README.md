@@ -19,7 +19,8 @@ This project builds that inventory from public data instead. Every street side i
 | Evidence | Effect |
 |---|---|
 | City curb zone (meter, permit, loading, etc.) | Coloured by that zone's rules and hours |
-| Posted parking sign in the city's sign inventory | Coloured by the sign's rules |
+| Posted parking sign in the city's sign inventory | Coloured by the sign's rules, along the stretch its arrow points to (from the sign to the sign closing the stretch, or to the corner); the rest of that side is judged as if unsigned |
+| Painted parking spaces (city pavement-markings inventory) | Parking exists |
 | City lists a parking lane on that street (Transportation Network) | Parking exists |
 | City lists a parking lane at one curb only (it doesn't record which) | Parking exists on the side a curb zone, a sign, or aerial photos point to; otherwise both sides stay grey |
 | Wide local residential street (28 ft+, 2 lanes or fewer) | Parking exists |

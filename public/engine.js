@@ -199,7 +199,10 @@ export function evaluateSide(code, tables, types, t, street = {}) {
   const rules = entry[0].map((i) => tables.rules[i]);
   if (!rules.length) {
     return { color: "green", title: "No parking signs", until: null, freeMins: Infinity, signs, cat: "nosigns", caveat: narrow,
-      reason: `The city's sign records (collected ${surveyed}) show no parking-restriction signs on this side of the block. Austin doesn't post "free parking" signs; an unsigned curb is open parking.`
+      reason: (street.pc
+        ? `The city's sign records (collected ${surveyed}) have parking-restriction signs on this side of the block, but their arrows point to another stretch; none covers this one.`
+        : `The city's sign records (collected ${surveyed}) show no parking-restriction signs on this side of the block.`)
+        + ` Austin doesn't post "free parking" signs; an unsigned curb is open parking.`
         + (signs.length ? " The signs listed below cover only a few spaces." : "") };
   }
   const now = combine(ruleResults(rules, types, t));
@@ -212,7 +215,9 @@ export function evaluateSide(code, tables, types, t, street = {}) {
   let color = now.color, title = now.title;
   if (color === "green" && freeMins < AMBER_MINUTES) { color = "amber"; title = title.replace("Free now", "Free, ending soon"); }
   return { color, title, reason: now.reason, until, freeMins, signs, cat: now.cat,
-    caveat: "Based on posted signs in the city's sign records. A sign may cover only part of the block." + (narrow ? " " + narrow : "") };
+    caveat: (street.pc
+      ? "Based on posted signs in the city's sign records; this stretch is where their arrows point."
+      : "Based on posted signs in the city's sign records. A sign may cover only part of the block.") + (narrow ? " " + narrow : "") };
 }
 
 export function evaluateCenterline(p) {

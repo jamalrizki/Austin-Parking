@@ -339,3 +339,41 @@ city/state image servers:
   parked along that curb; Wycliff Ln 12400 (42 ft collector, cars in 2019 + 2020, none since) and
   Crawford Ave 3700 east side (by a traffic island; parked-looking row in 2025) are plausible. None
   contradicted. None of the walked no-parking streets is green (validate.py checks this now).
+
+## 2026-11-10: signs apply where their arrows point; painted parking spaces
+
+**Problem.** Every parking sign was applied to the whole side of its block. Checked against the
+city's own records, sides with all-week No Parking signs showed parked cars in 2+ aerial surveys
+as often as sides with permit/time-limit signs (13.1% vs 13.2%), while sides with no physical room
+showed them ~1% of the time. 90% of the signs on those red-with-cars sides carry an arrow, and 483
+of the 881 sides have a single sign: "from here to the corner".
+
+**Arrow direction, calibrated.** Read as someone standing in the street facing the sign: on the left
+side of the centreline's digitised direction a RIGHT arrow points forward, on the right side
+backward. On 2,367 sides with exactly one single-arrow sign, the predicted no-parking stretch holds
+8% of the curb-parked cars (14% expected if arrows meant nothing); the cars fit at 1,256 signs and
+go the other way at 196. The sign layer's DIRECTION_FACING field predicts no better than chance and
+is not used.
+
+**Rule** (`sides.sign_stretches`), per rule on a side: a forward arrow starts a stretch running to
+the next sign of that rule pointing back, else to the block end (and mirror-wise); a double arrow
+sits inside a stretch running both ways to its closing signs; a sign with no arrow covers the side.
+Uncovered gaps shorter than one car (plus 20 ft corner clearance at a block end) are folded into the
+stretches beside them. The uncovered part of a side goes through the same evidence tests as an
+unsigned side (room, width/lane, OSM, cars, markings). The one-curb parking-lane rule now counts a
+side as "banned" only if its No Parking signs cover the whole side (Ohlen Rd 1800: a corner sign on
+the parking-lane side had pointed the lane to the wrong curb).
+
+**Result.** 3,656 sides split into 7,676 drawn stretches (streets.json v9, column 10 = stretch flag;
+curb-space counts are per block, so stretches carry -1). Curb length: all-week No Parking red
+1,114 -> 748 km; unsigned green 4,141 -> 4,428 km; grey +65 km (open stretch without evidence of
+room); no-room red +40 km; time-dependent sign rules 77 -> 53 km. Spot check, 2023 city aerials:
+24 random green stretches on split sides (two samples of 12, signs and detections marked); cars
+parked in the open stretch on most, quiet residential curbs on the rest, none contradicted. None of
+the walked no-parking streets is green.
+
+**Painted parking spaces.** `Markings_Specialty_Point_Read_Only`, SPECIALTY_POINT_TYPE = 5 (the
+subtype table; the field domain mislabels 4 as Parking), sub-types 1 "L", 2 "T", 3 stall line,
+ACTIVE only, fetched as `raw/markings.geojson`. 3,490 marks link to 508 sides; 406 sides have 2+
+(the evidence threshold; evidence bit 3 in streets.json). Mostly on blocks with curb zones or sign
+rules already; adds parking evidence to ~10 grey sides and settles the side of a one-curb lane.

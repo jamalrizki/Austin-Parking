@@ -100,6 +100,22 @@ def parse_windows(msg):
     return sorted(set(out)), "ok", note
 
 
+BOTH_WAYS = re.compile(r"DOUBLE ARROW|BOTH ARROW|TWO[- ]WAY")
+
+
+def arrow(msg):
+    """'left' / 'right' / 'both' from the arrow printed on a parking sign, or None (no arrow: the
+    sign covers the whole side). Wording in the city inventory: 'LEFT ARROW', 'RIGHT ARROW',
+    'DOUBLE ARROW', 'BOTH ARROWS'."""
+    m = re.sub(r"\s+", " ", (msg or "").upper())
+    if BOTH_WAYS.search(m):
+        return "both"
+    left, right = "LEFT ARROW" in m, bool(re.search(r"RIGHT ?ARROW", m))
+    if left != right:
+        return "left" if left else "right"
+    return "both" if left else None
+
+
 def classify(msg):
     """Return (group, rule|None). group in block/spot/info/ignore."""
     m = re.sub(r"\s+", " ", (msg or "").upper()).strip()

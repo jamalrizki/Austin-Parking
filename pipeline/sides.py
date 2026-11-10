@@ -23,6 +23,11 @@ being applied to frontage that is all curb cut (104 E 35th St).
 
 Side is left/right relative to the centreline's digitised direction, which is also how
 MapLibre's line-offset works (positive = right), so the browser can draw each side.
+
+Signs with arrows cover only part of a side: a single-arrow sign marks one end of a stretch and
+the stretch runs from the sign in the arrow's direction to the sign closing it (or the block's
+end). sign_stretches() splits such sides; build_segments.py draws each stretch separately and the
+uncovered part of the side is judged like a side with no signs (it still needs evidence of room).
 """
 import datetime
 import json
@@ -32,7 +37,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from hours import HoursError, minute_set, parse_human_hours  # noqa: E402
-from signs import classify  # noqa: E402
+from signs import arrow, classify  # noqa: E402
 
 RAW = pathlib.Path(__file__).resolve().parent / "raw"
 KX = 111320 * math.cos(math.radians(30.27))
@@ -181,6 +186,151 @@ def physical(ctn_row):
     return None, None, False
 
 
+def arrow_dir(arr, side):
+    """+1 / -1 = the arrow points toward higher / lower distance along the centreline, 0 = both
+    ways, None = no arrow. Read as someone standing in the street facing the sign: on the left side
+    (of the digitised direction) their right hand points forward, on the right side backward.
+    Calibrated 2026-11-10 against aerial parked cars on 2,367 sides with one single-arrow sign: the
+    predicted no-parking stretch holds 8% of the curb-parked cars (14% if arrows meant nothing), and
+    the cars fit this reading at 1,256 signs vs 196 the other way. The city's DIRECTION_FACING field
+    predicted no better than chance and is not used."""
+    if arr is None:
+        return None
+    if arr == "both":
+        return 0
+    return 1 if (arr == "right") == (side == "L") else -1
+
+
+def sign_stretches(signs, side, total):
+    """Split one side of a block by where its signs apply.
+    signs: [(along_m, arrow, rule or None for spot signs, message)].
+    Returns [(lo_m, hi_m, rules, messages)] covering 0..total, or None when the block rules all
+    cover the whole side (no arrows, or no sign closing the stretch they start).
+
+    Per rule, a sign pointing forward starts a stretch that runs to the next sign of the same rule
+    pointing back (else to the block's end), and vice versa; a double-arrow sign sits inside a
+    stretch that runs both ways to the signs closing it. A gap between stretches too short for a
+    car (or for a car plus the 20 ft corner clearance at a block end) is folded into the stretches
+    beside it, so the map never shows a sliver as open."""
+    blocks = [s for s in signs if s[2] is not None]
+    if not blocks or total <= 0:
+        return None
+    groups = {}
+    for s in blocks:
+        groups.setdefault(json.dumps(s[2], sort_keys=True), []).append(s)
+    spans = []
+    for key, ss in groups.items():
+        dirs = sorted(((a, arrow_dir(arr, side)) for a, arr, _, _ in ss), key=lambda x: x[0])
+        if any(d is None for _, d in dirs):
+            spans.append((0.0, total, key))
+            continue
+        for i, (a, d) in enumerate(dirs):
+            lo = hi = a
+            if d >= 0:
+                hi = next((b for b, e in dirs[i + 1:] if e == -1), total)
+            if d <= 0:
+                lo = next((b for b, e in reversed(dirs[:i]) if e == 1), 0.0)
+            spans.append((max(0.0, lo), min(total, hi), key))
+    cuts = sorted({0.0, total} | {x for lo, hi, _ in spans for x in (lo, hi)})
+    pieces = []
+    for a, b in zip(cuts, cuts[1:]):
+        if b - a < 0.01:
+            continue
+        m = (a + b) / 2
+        keys = frozenset(k for lo, hi, k in spans if lo <= m <= hi)
+        if pieces and pieces[-1][2] == keys:
+            pieces[-1][1] = b
+        else:
+            pieces.append([a, b, keys])
+    # fold uncovered gaps too short to park in into their neighbours (most restrictive: both)
+    for i, p in enumerate(pieces):
+        need = CAR_M + (CORNER_CLEAR_M if i == 0 or i == len(pieces) - 1 else 0)
+        if not p[2] and p[1] - p[0] < need:
+            p[2] = frozenset().union(*[pieces[j][2] for j in (i - 1, i + 1) if 0 <= j < len(pieces)])
+    # slivers under 1 m (two signs on one post, rounding) take the longer neighbour's rules
+    for i, p in enumerate(pieces):
+        nb = [pieces[j] for j in (i - 1, i + 1) if 0 <= j < len(pieces)]
+        if p[1] - p[0] < 1.0 and nb:
+            p[2] = max(nb, key=lambda q: q[1] - q[0])[2]
+    merged = []
+    for p in pieces:
+        if merged and merged[-1][2] == p[2]:
+            merged[-1][1] = p[1]
+        else:
+            merged.append(list(p))
+    if len(merged) < 2:
+        return None
+    out = []
+    for lo, hi, keys in merged:
+        msgs = []
+        for a, _, rule, msg in sorted(signs, key=lambda s: s[0]):
+            covers = rule is not None and json.dumps(rule, sort_keys=True) in keys
+            if (covers or (rule is None and lo <= a <= hi)) and msg not in msgs:
+                msgs.append(msg)
+        rules = [json.loads(k) for k in sorted(keys)]
+        out.append((lo, hi, rules, msgs))
+    return out
+
+
+def cut_lines(lines, a, b):
+    """The parts of a polyline (lon/lat) between along-distances a and b in metres, measured the
+    same way as _pieces (zero-length pieces skipped, separate lines chained)."""
+    out, s0 = [], 0.0
+    for line in lines:
+        cur = []
+        for p, q in zip(line, line[1:]):
+            L = math.hypot((q[0] - p[0]) * KX, (q[1] - p[1]) * KY)
+            if L == 0:
+                continue
+            s1 = s0 + L
+            if s1 > a and s0 < b:
+                t0, t1 = max(0.0, (a - s0) / L), min(1.0, (b - s0) / L)
+                if not cur:
+                    cur.append([p[0] + (q[0] - p[0]) * t0, p[1] + (q[1] - p[1]) * t0])
+                cur.append([p[0] + (q[0] - p[0]) * t1, p[1] + (q[1] - p[1]) * t1])
+            elif cur:
+                out.append(cur)
+                cur = []
+            s0 = s1
+        if len(cur) > 1:
+            out.append(cur)
+    return out
+
+
+# Painted parking-space markings (city markings inventory, type 5 = Parking): stall lines and the
+# "L"/"T" marks at the ends of spaces. Handicap symbols, scooter/bike boxes and "X" are left out.
+SPACE_MARKS = {1, 2, 3}
+MIN_MARKS = 2  # one stray mark could be a mislinked point; a marked row has several
+
+
+def marking_counts(lines, grid):
+    """{(seg, side): number of painted parking-space marks} from raw/markings.geojson, if present."""
+    path = RAW / "markings.geojson"
+    if not path.exists():
+        return {}
+    out = {}
+    for f in json.loads(path.read_text())["features"]:
+        p, g = f["properties"], f.get("geometry")
+        if not g or p.get("SPECIALTY_POINT_SUB_TYPE") not in SPACE_MARKS:
+            continue
+        if (p.get("LOCATION_STATUS") or "ACTIVE").strip().upper() != "ACTIVE":
+            continue
+        pt = g["coordinates"]
+        seg = str(int(float(p["SEGMENT_ID"]))) if p.get("SEGMENT_ID") else None
+        side, d = side_of(pt, lines[seg]) if seg in lines else (None, float("inf"))
+        if d > MAX_LINK_M:
+            best = (None, None, float("inf"))
+            for s in grid.near(pt):
+                sd, dd = side_of(pt, lines[s])
+                if dd < best[2]:
+                    best = (s, sd, dd)
+            if best[2] > MAX_NEAREST_M:
+                continue
+            seg, side, d = best
+        out[(seg, side)] = out.get((seg, side), 0) + 1
+    return out
+
+
 PARK_EDGES = {"P", "BL/P"}
 
 
@@ -207,6 +357,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
     """kept: {segment_id(str): raw geometry} for streets shown on the map; props: centreline attributes.
     Returns (side_of_segment dict {(seg, 'L'|'R'): code_or_entry}, stats)."""
     lines = {s: lines_of(g) for s, g in kept.items()}
+    geo = {s: _pieces(ls) for s, ls in lines.items()}
     grid = Grid()
     for s, ls in lines.items():
         grid.add(s, ls)
@@ -265,6 +416,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
 
     # S: signs
     entries, stats = {}, {"signs_used": 0, "relinked": 0, "dropped_far": 0, "spot": 0, "ignored": 0}
+    placed = {}  # (seg, side) -> [(along_m, arrow, rule or None, message)] for sign_stretches
     for f in load("parking_signs")["features"]:
         p, g = f["properties"], f["geometry"]
         if not g:
@@ -291,8 +443,10 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         msg = " ".join((p.get("SIGN_MESSAGE") or "").split())
         if msg not in e["msgs"]:
             e["msgs"].append(msg)
+        along = _project(*_xy(pt), geo[seg][0])[0] if geo[seg][0] else 0.0
         if grp == "spot":
             stats["spot"] += 1
+            placed.setdefault((seg, side), []).append((along, None, None, msg))
             continue
         rule = dict(rule)
         if rule["q"] == "area":
@@ -300,6 +454,7 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         rule["w"] = [list(w) for w in rule["w"]]
         if rule not in e["rules"]:
             e["rules"].append(rule)
+        placed.setdefault((seg, side), []).append((along, arrow(msg), rule, msg))
         stats["signs_used"] += 1
 
     medians = median_sides(kept, props, lines) if props else set()
@@ -340,15 +495,22 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         for k, v in per_side.items():
             seg, side = k.split("|")
             cars[(seg, side)] = sum(1 for n in v.values() if n > 0)  # number of survey years with cars at this curb
+    marks = marking_counts(lines, grid)
+    marked = {k for k, n in marks.items() if n >= MIN_MARKS}
+    stats["marked_sides"] = len(marked)
+    split = {k: sign_stretches(placed.get(k, []), k[1], geo[k[0]][1]) for k, e in entries.items() if e["rules"]}
 
     def sign_says(seg, sd):
-        """'lane' if a curb zone or sign shows parking is regulated (so it exists) on this side,
-        'banned' if its signs forbid parking all week (the usual 'No parking, bike lane' side)."""
+        """'lane' if a curb zone, painted spaces or a sign shows parking is regulated (so it exists)
+        on this side, 'banned' if its signs forbid parking all week along the whole side (the usual
+        'No parking, bike lane' side). Signs whose arrows cover only part of the side settle
+        nothing: Ohlen Rd 1800 had a corner No Parking sign on the parking-lane side."""
         rules = entries.get((seg, sd), {"rules": ()})["rules"]
         timed = [r for r in rules if r["t"] == "No Parking" and r["q"] == "ok" and len(minute_set(r["w"])) < 7 * 1440]
-        if (seg, sd) in zone_sides or timed or any(r["t"] != "No Parking" for r in rules):
+        if (seg, sd) in zone_sides or (seg, sd) in marked or timed or any(r["t"] != "No Parking" for r in rules):
             return "lane"  # includes No Parking during set hours: parking is allowed outside them
-        return "banned" if any(r["t"] == "No Parking" and r["q"] == "ok" for r in rules) else None
+        whole = any(r["t"] == "No Parking" and r["q"] == "ok" for r in rules) and not split.get((seg, sd))
+        return "banned" if whole else None
 
     def lane_side(seg):
         """Sides ('L', 'R', 'LR' or '') that hold the parking lane on a block where the city lists
@@ -369,41 +531,51 @@ def build_side_info(kept, pay_areas, props=None, ctn=None, osm_side_fn=None):
         return "LR" if n["L"] >= 2 else ""
 
     stats["one_sided_lane_segments"] = sum(1 for v in one_side.values() if v)
-    evidence = {}
-    out = {}
+
+    def side_code(seg, side, entry):
+        """Code for one side (or one stretch of it) given its sign entry ({"rules", "msgs"} or None)."""
+        osm_yes = osm.get((seg, side)) == "yes"
+        if one_side[seg]:
+            # The listed lane is at one curb and the other has a travel or bike lane, so neither
+            # the lane nor the street's width is evidence for a side until something says which.
+            has_evidence = osm_yes or (seg, side) in marked or side in lane_side(seg)
+        else:
+            has_evidence = (fits.get(seg) or osm_yes or (seg, side) in marked
+                            or (car_ok[seg] and cars.get((seg, side), 0) >= 2))
+        if (seg, side) in medians:
+            return "M"
+        if (seg, side) in zone_sides:
+            return "Z"
+        if spaces.get((seg, side)) == 0 and seg in surveyed and room.get(seg) is not False:
+            return ("X", "driveways")
+        if entry and entry["rules"]:
+            return entry
+        if room.get(seg) is False:
+            return ("X", why[seg])
+        if osm.get((seg, side)) == "no":
+            return ("X", "osm")
+        if seg not in surveyed:
+            return "U"
+        if not has_evidence:
+            return ("W", "oneside" if one_side[seg] else fit_why[seg])
+        return entry if entry else "N"
+
+    evidence, out, stretches = {}, {}, {}
     for seg in kept:
         for side in ("L", "R"):
-            osm_yes = osm.get((seg, side)) == "yes"
-            if one_side[seg]:
-                # The listed lane is at one curb and the other has a travel or bike lane, so neither
-                # the lane nor the street's width is evidence for a side until something says which.
-                has_evidence = osm_yes or side in lane_side(seg)
-            else:
-                has_evidence = fits.get(seg) or osm_yes or (car_ok[seg] and cars.get((seg, side), 0) >= 2)
-            if (seg, side) in medians:
-                out[(seg, side)] = "M"
-            elif (seg, side) in zone_sides:
-                out[(seg, side)] = "Z"
-            elif spaces.get((seg, side)) == 0 and seg in surveyed and room.get(seg) is not False:
-                out[(seg, side)] = ("X", "driveways")
-            elif (seg, side) in entries and entries[(seg, side)]["rules"]:
-                out[(seg, side)] = entries[(seg, side)]
-            elif room.get(seg) is False:
-                out[(seg, side)] = ("X", why[seg])
-                stats["no_room_sides"] = stats.get("no_room_sides", 0) + 1
-            elif osm.get((seg, side)) == "no":
-                out[(seg, side)] = ("X", "osm")
-            elif seg not in surveyed:
-                out[(seg, side)] = "U"
-            elif not has_evidence:
-                out[(seg, side)] = ("W", "oneside" if one_side[seg] else fit_why[seg])
-            elif (seg, side) in entries:
-                out[(seg, side)] = entries[(seg, side)]
-            else:
-                out[(seg, side)] = "N"
-            ev = (1 if osm_yes else 0) | (min(cars.get((seg, side), 0), 3) << 1)
+            out[(seg, side)] = code = side_code(seg, side, entries.get((seg, side)))
+            if isinstance(code, dict) and code["rules"]:
+                st = split.get((seg, side))
+                if st:
+                    stretches[(seg, side)] = [(lo, hi, side_code(seg, side, {"rules": r, "msgs": m} if r or m else None))
+                                              for lo, hi, r, m in st]
+            ev = ((1 if osm.get((seg, side)) == "yes" else 0) | (min(cars.get((seg, side), 0), 3) << 1)
+                  | (8 if (seg, side) in marked else 0))
             if ev:
                 evidence[(seg, side)] = ev
+    stats["no_room_sides"] = sum(1 for v in out.values() if isinstance(v, tuple) and v[1] in ("lane", "bike", "narrow"))
+    stats["split_sides"] = len(stretches)
+    stats["stretches"] = stretches
     years = sorted(datetime.datetime.fromtimestamp(t / 1000, datetime.timezone.utc).year for t in survey_dates)
     stats["survey_years"] = [years[0], years[len(years) // 2], years[-1]] if years else None
     stats["spaces"] = spaces

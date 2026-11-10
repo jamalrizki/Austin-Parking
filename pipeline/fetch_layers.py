@@ -24,6 +24,8 @@ ARCGIS_LAYERS = {
     "city_limits": f"{ARCGIS}/BOUNDARIES_jurisdictions/FeatureServer/0",
     # RPP district polygons (context only).
     "rpp_districts": f"{ARCGIS}/Residential_Parking_Permits/FeatureServer/1",
+    # Painted parking markings (stall lines, "L"/"T" space marks): marked curb parking, per side.
+    "markings": f"{ARCGIS}/Markings_Specialty_Point_Read_Only/FeatureServer/0",
 }
 SIGNS = f"{ARCGIS}/Sign_Assets_Maint_Public_View/FeatureServer"
 SOCRATA_CENTERLINE = "https://data.austintexas.gov/resource/8hf2-pdmb.geojson"
@@ -48,7 +50,11 @@ def area_polygon():
     return gj["features"][0]["geometry"]["coordinates"][0]  # [[lon, lat], ...]
 
 
-ARCGIS_WHERE = {"city_limits": "JURISDICTION_LABEL='AUSTIN FULL PURPOSE'"}
+ARCGIS_WHERE = {
+    "city_limits": "JURISDICTION_LABEL='AUSTIN FULL PURPOSE'",
+    # Type 5 = Parking in the layer's subtype table (its field domain wrongly labels 4 as Parking).
+    "markings": "SPECIALTY_POINT_TYPE=5",
+}
 
 
 def fetch_arcgis(name, url):

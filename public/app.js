@@ -176,7 +176,10 @@ function openCard(src, id, side) {
     if (ev & 1) rows.push(["OpenStreetMap", "Parking lane mapped by contributors"]);
     // Survey names carry their year (city2023, sm2019); older data files don't list them.
     const years = state.streets.tables.carSurveys.map((s) => (s.match(/\d{4}/) || [s])[0]).sort();
-    if (ev >> 1) rows.push(["Aerial photos", `Cars seen parked at this curb in ${ev >> 1}${years.length ? ` of ${years.length} surveys (${years.join(", ")})` : " aerial surveys"}`]);
+    const carYears = (ev >> 1) & 3;
+    if (carYears) rows.push(["Aerial photos", `Cars seen parked at this curb in ${carYears}${years.length ? ` of ${years.length} surveys (${years.join(", ")})` : " aerial surveys"}`]);
+    if (ev & 8) rows.push(["Painted spaces", "Parking spaces marked on the pavement (city markings inventory)"]);
+    if (p.pc) rows.push(["Part of block", "Sign arrows split this side of the block; this stretch is shown on its own."]);
     const sp = side === "L" ? p.spL : p.spR;
     if (sp > 0 && r.color !== "grey") rows.push(["Curb space", `Room for about ${sp >= 99 ? "99+" : sp} car${sp === 1 ? "" : "s"} between driveways (city aerial survey)`]);
   }

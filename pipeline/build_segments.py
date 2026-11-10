@@ -270,6 +270,7 @@ def build_centerline(excl, covered, pay_areas):
     sides, stats = build_side_info(kept, pay_areas, kept_props, ctn, osm_side)
     spaces = stats.pop("spaces")
     evidence = stats.pop("evidence")
+    stretches = stats.pop("stretches")
     from sides import lane_listing
     for seg in kept:
         row = ctn.get(seg) or {}
@@ -287,7 +288,35 @@ def build_centerline(excl, covered, pay_areas):
         f["properties"]["evR"] = evidence.get((seg, "R"), 0)
         f["properties"]["L"] = sides[(seg, "L")]
         f["properties"]["R"] = sides[(seg, "R")]
-    return feats, dropped, stats
+    return split_by_signs(feats, kept, stretches), dropped, stats
+
+
+def split_by_signs(feats, kept, stretches):
+    """Where sign arrows cover only part of a side (sides.sign_stretches), draw the block as several
+    pieces, each with its own left/right code. Curb-space counts are per block, so pieces get -1."""
+    from sides import cut_lines
+    out = []
+    for f in feats:
+        seg = f["properties"]["seg"]
+        parts = {sd: stretches.get((seg, sd)) for sd in ("L", "R")}
+        if not any(parts.values()):
+            out.append(f)
+            continue
+        cuts = sorted({x for st in parts.values() if st for lo, hi, _ in st for x in (lo, hi)})
+        for a, b in zip(cuts, cuts[1:]):
+            if b - a < 0.5:
+                continue
+            ls = [simplify(rnd5(line), 1.5) for line in cut_lines(lines_of(kept[seg]), a, b)]
+            if not ls:
+                continue
+            m = (a + b) / 2
+            p = dict(f["properties"], pc=1, spL=-1, spR=-1)
+            for sd in ("L", "R"):
+                if parts[sd]:
+                    p[sd] = next(c for lo, hi, c in parts[sd] if lo <= m <= hi)
+            geom = {"type": "LineString", "coordinates": ls[0]} if len(ls) == 1 else {"type": "MultiLineString", "coordinates": ls}
+            out.append({"type": "Feature", "geometry": geom, "properties": p})
+    return out
 
 
 # ---------- OSM ----------
@@ -349,13 +378,14 @@ def build_osm(excl, zone_index):
 
 def pack_streets(feats, survey_years, car_surveys=()):
     """Compact street format, decoded in public/streets.js.
-    {"v":8, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
+    {"v":9, "s":1e5, "o":[x0,y0], "n":[names], "m":[sign messages], "r":[rules], "e":[side entries],
      "sy":[first, median, last survey year], "cs":[aerial surveys used for parked-car evidence],
      "f":[[name_i, hundred_block(-1 = none), left, right, pavement_ft(-1 = unknown),
             parking_lane(0 none listed / 1 listed / 2 listed at one curb only, side not recorded),
             spaces_left, spaces_right (car-length curb gaps between driveways, -1 unknown),
             evidence_left, evidence_right (bit0 OSM parking lane mapped; bits1-2 aerial survey years with
-            cars parked at this curb, 0-3), part...], ...]}
+            cars parked at this curb, 0-3; bit3 painted parking spaces in the city markings inventory),
+            piece (0 whole block, 1 one stretch of a block split where sign arrows end), part...], ...]}
     left/right: -1 curb zones cover this side, -2 surveyed with no parking signs,
                 -3 no city sign records, -4 median side of a divided road,
                 -5/-6/-7 no physical parking space (travel lane / bike lane at curb / under 24 ft wide),
@@ -405,7 +435,7 @@ def pack_streets(feats, survey_years, car_surveys=()):
         g = f["geometry"]
         parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
         row = [ni, p.get("blk", -1), side_code(p["L"]), side_code(p["R"]), p.get("w", -1), p.get("pk", 0),
-               min(p.get("spL", -1), 99), min(p.get("spR", -1), 99), p.get("evL", 0), p.get("evR", 0)]
+               min(p.get("spL", -1), 99), min(p.get("spR", -1), 99), p.get("evL", 0), p.get("evR", 0), p.get("pc", 0)]
         for line in parts:
             flat = []
             for x, y in line:
@@ -414,7 +444,7 @@ def pack_streets(feats, survey_years, car_surveys=()):
                 px, py = ix, iy
             row.append(flat)
         out.append(row)
-    return {"v": 8, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years,
+    return {"v": 9, "s": S, "o": [ox, oy], "n": names, "m": msgs, "r": rules, "e": ents, "sy": survey_years,
             "cs": list(car_surveys), "f": out}
 
 

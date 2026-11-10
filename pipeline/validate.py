@@ -21,15 +21,15 @@ ssize = STREETS.stat().st_size / 1e6
 if ssize > MAX_STREETS_MB:
     errors.append(f"streets.json is {ssize:.2f} MB (limit {MAX_STREETS_MB})")
 streets = json.loads(STREETS.read_text())
-if streets.get("v") != 8:
-    errors.append(f"streets.json format v{streets.get('v')} (expected 8)")
+if streets.get("v") != 9:
+    errors.append(f"streets.json format v{streets.get('v')} (expected 9)")
 unknown_sides = sum((r[2] == -3) + (r[3] == -3) for r in streets["f"])
 if unknown_sides / max(1, 2 * len(streets["f"])) > 0.10:
     errors.append(f"{unknown_sides} street sides have no sign records (>10%); sign fetch may be incomplete")
 # Aerial parked-car evidence disappears without an error if the stored detections or the road
 # outlines are missing, and every side that relied on it would quietly change colour.
 MIN_CAR_SIDES = 1500  # sides with parked cars in 2+ surveys: 2,843 on 2026-11-09 with two surveys
-car_sides = sum(((r[8] >> 1) >= 2) + ((r[9] >> 1) >= 2) for r in streets["f"])
+car_sides = sum((((r[8] >> 1) & 3) >= 2) + (((r[9] >> 1) & 3) >= 2) for r in streets["f"] if not r[10])
 if car_sides < MIN_CAR_SIDES:
     errors.append(f"only {car_sides} street sides have aerial parked-car evidence (expected >= {MIN_CAR_SIDES}); "
                   "pipeline/cars/out or pipeline/raw/roads.jsonl may be missing")
